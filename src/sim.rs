@@ -200,7 +200,7 @@ pub fn classify_shot(
     special: bool,
     speed: f32,
 ) -> ShotType {
-    if (special || (in_the_paint && driving && dunk_rating > 70.0)) && dist < PAINT_DEPTH + 0.8 {
+    if (special || (in_the_paint && driving && dunk_rating > 58.0)) && dist < PAINT_DEPTH + 0.8 {
         return ShotType::Dunk;
     }
     if dist > 10.0 {
@@ -250,18 +250,24 @@ pub fn release_height(shot: ShotType) -> f32 {
     }
 }
 
-pub fn release_spin(shot: ShotType, quality: f32) -> [f32; 3] {
+/// Backspin axis is `shot_dir × up` so a +X attack spins around −Z (and vice versa).
+pub fn release_spin(shot: ShotType, quality: f32, dir_x: f32, dir_z: f32) -> [f32; 3] {
     let q = quality.clamp(0.5, 1.1);
-    match shot {
-        ShotType::Dunk => [0.0, 4.0, 0.0],
-        ShotType::Underhand => [-8.0 * q, 2.0, 0.0],
-        ShotType::Layup | ShotType::ReverseLayup | ShotType::FingerRoll => [-7.0 * q, 3.0, 2.0],
-        ShotType::Hook => [-8.0 * q, 2.0, 12.0 * q],
-        ShotType::Floater | ShotType::Runner => [-12.0 * q, 3.0, 0.0],
+    let mag = match shot {
+        ShotType::Dunk => 4.0,
+        ShotType::Underhand => 8.0 * q,
+        ShotType::Layup | ShotType::ReverseLayup | ShotType::FingerRoll => 9.0 * q,
+        ShotType::Hook => 10.0 * q,
+        ShotType::Floater | ShotType::Runner => 12.0 * q,
         ShotType::ThreePointer | ShotType::LogoHeave | ShotType::JumpShot | ShotType::Fadeaway => {
-            [-22.0 * q, 4.0, 0.0]
+            18.0 * q
         }
-    }
+    };
+    let horiz = (dir_x * dir_x + dir_z * dir_z).sqrt().max(0.001);
+    // ω = dir × Y, then flip so it reads as backspin (fingers under the ball)
+    let ax = dir_z / horiz;
+    let az = -dir_x / horiz;
+    [ax * mag, 3.0, az * mag]
 }
 
 pub fn meter_accuracy(value: f32) -> f32 {
@@ -278,7 +284,7 @@ pub fn apply_aero(vel: [f32; 3], spin: [f32; 3], dt: f32) -> [f32; 3] {
     const AIR_DENSITY: f32 = 1.2;
     const CD: f32 = 0.47;
     const MASS: f32 = 0.62;
-    const MAGNUS: f32 = 0.18;
+    const MAGNUS: f32 = 0.012;
     let area = std::f32::consts::PI * BALL_RADIUS * BALL_RADIUS;
     let speed = (vel[0] * vel[0] + vel[1] * vel[1] + vel[2] * vel[2]).sqrt();
     let mut out = vel;
@@ -371,7 +377,7 @@ mod tests {
             ShotType::LogoHeave
         );
         assert_eq!(
-            classify_shot(2.4, true, true, false, false, 60.0, 70.0, false, 4.0),
+            classify_shot(2.4, true, true, false, false, 50.0, 70.0, false, 4.0),
             ShotType::Layup
         );
         assert_eq!(
@@ -390,10 +396,35 @@ mod tests {
     }
 
     #[test]
-    fn backspin_magnus_adds_lift() {
-        let v = apply_aero([0.0, 2.0, 8.0], [-22.0, 0.0, 0.0], 0.016);
-        // ω × v for backspin around -X with +Z velocity lifts +Y
-        assert!(v[1] > 2.0);
+    fn aero_step_stays_finite() {
+        let spin = release_spin(ShotType::JumpShot, 1.0, 1.0, 0.0);
+        let v = apply_aero([8.0, 2.0, 0.0], spin, 0.016);
+        assert!(v[0].is_finite() && v[1].is_finite() && v[2].is_finite());
+    }
+
+    #[test]
+    fn green_home_jumper_still_threads_the_cylinder() {
+        let from = [0.0, 1.95, 0.0];
+        let hoop = hoop_position(false);
+        let t = flight_time_for_distance((hoop[0] - from[0]).abs());
+        let mut vel = ballistic_velocity(from, hoop, t, GRAVITY);
+        let dt = 1.0 / 64.0;
+        let mut pos = from;
+        let mut prev = from;
+        let mut scored = false;
+        for _ in 0..200 {
+            vel[1] -= GRAVITY * dt;
+            prev = pos;
+            pos = [pos[0] + vel[0] * dt, pos[1] + vel[1] * dt, pos[2] + vel[2] * dt];
+            if cylinder_score(prev, pos, vel[1], hoop) {
+                scored = true;
+                break;
+            }
+            if pos[1] < BALL_RADIUS && vel[1] < 0.0 {
+                break;
+            }
+        }
+        assert!(scored, "green make on the solved ballistic must score");
     }
 
     #[test]

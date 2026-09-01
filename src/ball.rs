@@ -54,6 +54,7 @@ pub struct BallState {
     pub last_passer: Option<Entity>,
     pub dribble_phase: f32,
     pub rim_hits: u8,
+    pub release_was_three: bool,
 }
 
 #[derive(Message, Clone, Copy)]
@@ -61,6 +62,7 @@ pub struct BucketEvent {
     pub shooter: Option<Entity>,
     pub hoop_home: bool,
     pub dunk: bool,
+    pub is_three: bool,
 }
 
 #[derive(Message, Clone, Copy)]
@@ -126,6 +128,7 @@ pub fn spawn_ball(
                 last_passer: None,
                 dribble_phase: 0.0,
                 rim_hits: 0,
+                release_was_three: false,
             },
             Mesh3d(meshes.add(Sphere::new(BALL_RADIUS * 1.15))),
             MeshMaterial3d(mat),
@@ -183,8 +186,12 @@ fn integrate_ball(
             continue;
         }
         vel.0.y -= GRAVITY * dt * theme.hangtime.recip().max(0.7);
-        let aero = apply_aero(vel.0.to_array(), spin.0.to_array(), dt);
-        vel.0 = Vec3::from_array(aero);
+        // Shots stay on the solved ballistic so a green make still threads the rim.
+        // Loose / pass balls get drag + a little English.
+        if state.hold != Hold::Shot {
+            let aero = apply_aero(vel.0.to_array(), spin.0.to_array(), dt);
+            vel.0 = Vec3::from_array(aero);
+        }
         tf.translation += vel.0 * dt;
         let omega = spin.0.length();
         if omega > 0.01 {
@@ -254,6 +261,7 @@ fn hoop_collision(
                 shooter: state.shooter.or(state.last_touch),
                 hoop_home: home,
                 dunk,
+                is_three: state.release_was_three && !dunk,
             });
             state.hold = Hold::Loose;
             state.holder = None;
@@ -293,7 +301,10 @@ fn hoop_collision(
         }
 
         let board_x = hoop.x + if home { -0.42 } else { 0.42 };
-        if (p.x - board_x).abs() < 0.12 && (p.y - (RIM_HEIGHT + 0.32)).abs() < 0.55 && p.z.abs() < 0.92
+        if (p.x - board_x).abs() < 0.12
+            && (p.y - (RIM_HEIGHT + 0.32)).abs() < 0.55
+            && p.z.abs() < 0.92
+            && vel.0.x * (board_x - p.x) > 0.0
         {
             vel.0.x = -vel.0.x * 0.68;
             tf.translation.x = board_x + if home { 0.13 } else { -0.13 };

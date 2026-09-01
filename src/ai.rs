@@ -198,6 +198,10 @@ fn ai_decisions(
         st.holder = None;
         st.shooter = Some(e);
         st.rim_hits = 0;
+        st.release_was_three = matches!(
+            crate::sim::shot_kind(pos.x, pos.z, hoop_x),
+            crate::sim::ShotKind::Three
+        );
         if let Ok((_, _, _, _, _, mut pose, mut clock, _, _)) = players.get_mut(e) {
             *pose = if should_dunk { Pose::Dunk } else { Pose::Shoot };
             clock.0 = 0.0;

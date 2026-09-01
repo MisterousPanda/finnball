@@ -308,6 +308,7 @@ fn reset_to_half(
         st.shooter = None;
         st.last_passer = None;
         st.rim_hits = 0;
+        st.release_was_three = false;
     }
 }
 
@@ -414,7 +415,7 @@ fn follow_dribble(
         ticks.write(DribbleTickEvent { pos: btf.translation });
     }
     let peak = (0.38 + speed * 0.015).clamp(0.28, 0.52);
-    let bounce = BALL_RADIUS + 0.03 + (1.0 + phase.cos()) * 0.5 * peak;
+    let bounce = BALL_RADIUS + (1.0 + phase.cos()) * 0.5 * peak;
     let hand = ptf.right() * 0.38 + ptf.forward() * 0.18;
     let height = if matches!(*pose, Pose::Shoot | Pose::Dunk) {
         1.85
@@ -439,10 +440,13 @@ fn pickup_loose_ball(
     let Ok((btf, mut state, bvel)) = ball.single_mut() else {
         return;
     };
-    if state.hold != Hold::Loose {
+    if !matches!(state.hold, Hold::Loose | Hold::Shot | Hold::Pass) {
         return;
     }
-    if bvel.0.length() > 9.5 && btf.translation.y > 1.4 {
+    if state.hold != Hold::Loose && (bvel.0.length() > 4.8 || btf.translation.y > 1.55) {
+        return;
+    }
+    if state.hold == Hold::Loose && bvel.0.length() > 9.5 && btf.translation.y > 1.4 {
         return;
     }
     let mut best: Option<(Entity, f32)> = None;
@@ -539,6 +543,10 @@ fn shoot_and_pass(
     };
     let (me_e, me_side, me_pos, me_vel, three, mid, dunk, pass, _blk, stam, _) = me;
 
+    if intent.special && state.hold == Hold::Held && state.holder == Some(ctrl) {
+        intent.shoot_released = true;
+    }
+
     if intent.pass && state.hold == Hold::Held && state.holder == Some(ctrl) {
         if let Some(target) = nearest_teammate(&roster, me_e, me_side, me_pos) {
             let kind = intent.pass_kind;
@@ -620,11 +628,12 @@ fn shoot_and_pass(
                 GRAVITY,
             );
             bvel.0 = Vec3::new(v[0], v[1], v[2]) + me_vel * 0.15;
-            spin.0 = Vec3::from_array(release_spin(shot, 1.0));
+            spin.0 = Vec3::from_array(release_spin(shot, 1.0, hoop.x - me_pos.x, hoop.z - me_pos.z));
             state.hold = Hold::Shot;
             state.holder = None;
             state.shooter = Some(ctrl);
             state.rim_hits = 0;
+            state.release_was_three = false;
             if let Ok((_, _, _, _, _, mut pose, mut clock, mut boxl, _)) = players.get_mut(ctrl) {
                 *pose = Pose::Dunk;
                 clock.0 = 0.0;
@@ -668,11 +677,12 @@ fn shoot_and_pass(
         btf.translation = me_pos + Vec3::Y * height;
         bvel.0 = Vec3::new(v[0], v[1], v[2]) + me_vel * 0.12;
         let quality = (1.0 - meter_err * 1.2).clamp(0.5, 1.1);
-        spin.0 = Vec3::from_array(release_spin(shot, quality));
+        spin.0 = Vec3::from_array(release_spin(shot, quality, hoop.x - me_pos.x, hoop.z - me_pos.z));
         state.hold = Hold::Shot;
         state.holder = None;
         state.shooter = Some(ctrl);
         state.rim_hits = 0;
+        state.release_was_three = is_three;
         if let Ok((_, _, _, _, _, mut pose, mut clock, mut boxl, _)) = players.get_mut(ctrl) {
             *pose = Pose::Shoot;
             clock.0 = 0.0;
@@ -858,10 +868,13 @@ fn handle_buckets(
             if let Ok((_, p, tf, mut pose, mut clockp, mut boxl)) = players.get_mut(shooter) {
                 side = p.side;
                 let hoop_x = if p.side == Side::Home { HOOP_X } else { -HOOP_X };
-                pts = points_for(shot_kind(tf.translation.x, tf.translation.z, hoop_x));
-                if ev.dunk {
-                    pts = 2;
-                }
+                pts = if ev.dunk {
+                    2
+                } else if ev.is_three {
+                    3
+                } else {
+                    points_for(shot_kind(tf.translation.x, tf.translation.z, hoop_x))
+                };
                 boxl.pts += pts;
                 boxl.fg_made += 1;
                 *pose = Pose::Celebrate;

@@ -784,9 +784,9 @@ fn frame_shot(
             3.6,
         ),
         CameraShot::HoopCamOut => (
-            hoop + Vec3::new(hoop_sign * 0.85, 0.55, 0.2),
-            look,
-            54.0,
+            hoop + Vec3::new(-hoop_sign * 3.2, 2.4, 2.4),
+            ball,
+            48.0,
             4.8,
             5.2,
         ),
