@@ -99,6 +99,10 @@ pub struct Rig {
     pub r_arm: Entity,
     pub l_leg: Entity,
     pub r_leg: Entity,
+    pub l_elbow: Entity,
+    pub r_elbow: Entity,
+    pub l_knee: Entity,
+    pub r_knee: Entity,
 }
 
 /// Face parts live as children; this handle sits on the player root.
@@ -240,8 +244,32 @@ pub fn spawn_player(
     let sphere = meshes.add(Sphere::new(1.0));
     let cuboid = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let cylinder = meshes.add(Cylinder::new(0.5, 1.0));
-    let arm_mesh = meshes.add(Capsule3d::new(0.075, 0.46));
-    let leg_mesh = meshes.add(Capsule3d::new(0.09, 0.5));
+    let torso_mesh = meshes.add(Cuboid::new(0.5, 0.62, 0.3));
+    let upper_arm = meshes.add(Capsule3d::new(0.072, 0.2));
+    let forearm = meshes.add(Capsule3d::new(0.06, 0.2));
+    let thigh = meshes.add(Capsule3d::new(0.1, 0.2));
+    let shin = meshes.add(Capsule3d::new(0.08, 0.2));
+    let torus = meshes.add(Torus {
+        minor_radius: 0.08,
+        major_radius: 1.0,
+    });
+    let sole_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.96, 0.96, 0.94),
+        perceptual_roughness: 0.6,
+        ..default()
+    });
+    let accent_mat = materials.add(StandardMaterial {
+        base_color: p.accent,
+        emissive: LinearRgba::from(p.accent.to_linear()) * 0.4,
+        perceptual_roughness: 0.5,
+        ..default()
+    });
+    let shadow_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.0, 0.0, 0.02, 0.5),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        ..default()
+    });
     let sock_mat = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         perceptual_roughness: 0.9,
@@ -254,6 +282,10 @@ pub fn spawn_player(
     let mut r_arm = Entity::PLACEHOLDER;
     let mut l_leg = Entity::PLACEHOLDER;
     let mut r_leg = Entity::PLACEHOLDER;
+    let mut l_elbow = Entity::PLACEHOLDER;
+    let mut r_elbow = Entity::PLACEHOLDER;
+    let mut l_knee = Entity::PLACEHOLDER;
+    let mut r_knee = Entity::PLACEHOLDER;
     let mut brow_l = Entity::PLACEHOLDER;
     let mut brow_r = Entity::PLACEHOLDER;
     let mut mouth = Entity::PLACEHOLDER;
@@ -286,23 +318,20 @@ pub fn spawn_player(
         .with_children(|root| {
             torso_id = root
                 .spawn((
-                    Mesh3d(cuboid.clone()),
+                    Mesh3d(torso_mesh.clone()),
                     MeshMaterial3d(jersey_mat.clone()),
-                    Transform {
-                        translation: Vec3::new(0.0, 1.15, 0.0),
-                        scale: Vec3::new(0.5, 0.62, 0.3),
-                        ..default()
-                    },
+                    Transform::from_xyz(0.0, 1.15, 0.0),
                     Visibility::default(),
                 ))
                 .with_children(|t| {
-                    // Shoulder mass + straps + waistband live on the torso so they ride the lean.
+                    // Shoulder mass, straps, waistband, side panels, neck and number all
+                    // ride the torso so the whole upper body lifts on shots and dunks.
                     t.spawn((
                         Mesh3d(cuboid.clone()),
                         MeshMaterial3d(jersey_mat.clone()),
                         Transform {
-                            translation: Vec3::new(0.0, 0.3, 0.0),
-                            scale: Vec3::new(1.14, 0.42, 1.06),
+                            translation: Vec3::new(0.0, 0.19, 0.0),
+                            scale: Vec3::new(0.57, 0.26, 0.318),
                             ..default()
                         },
                     ));
@@ -311,8 +340,17 @@ pub fn spawn_player(
                             Mesh3d(cuboid.clone()),
                             MeshMaterial3d(trim_mat.clone()),
                             Transform {
-                                translation: Vec3::new(sx * 0.3, 0.42, 0.0),
-                                scale: Vec3::new(0.22, 0.22, 1.08),
+                                translation: Vec3::new(sx * 0.15, 0.26, 0.0),
+                                scale: Vec3::new(0.11, 0.14, 0.324),
+                                ..default()
+                            },
+                        ));
+                        t.spawn((
+                            Mesh3d(cuboid.clone()),
+                            MeshMaterial3d(trim_mat.clone()),
+                            Transform {
+                                translation: Vec3::new(sx * 0.25, -0.03, 0.0),
+                                scale: Vec3::new(0.025, 0.53, 0.21),
                                 ..default()
                             },
                         ));
@@ -321,23 +359,29 @@ pub fn spawn_player(
                         Mesh3d(cuboid.clone()),
                         MeshMaterial3d(trim_mat.clone()),
                         Transform {
-                            translation: Vec3::new(0.0, -0.5, 0.0),
-                            scale: Vec3::new(1.02, 0.1, 1.04),
+                            translation: Vec3::new(0.0, -0.31, 0.0),
+                            scale: Vec3::new(0.51, 0.062, 0.312),
                             ..default()
                         },
                     ));
+                    t.spawn((
+                        Mesh3d(cylinder.clone()),
+                        MeshMaterial3d(skin.clone()),
+                        Transform {
+                            translation: Vec3::new(0.0, 0.35, 0.0),
+                            scale: Vec3::new(0.16, 0.12, 0.16),
+                            ..default()
+                        },
+                    ));
+                    spawn_jersey_number(
+                        t,
+                        &cuboid,
+                        &number_mat,
+                        jersey_number(id, slot),
+                        Vec3::new(0.0, 0.05, 0.175),
+                    );
                 })
                 .id();
-            // neck
-            root.spawn((
-                Mesh3d(cylinder.clone()),
-                MeshMaterial3d(skin.clone()),
-                Transform {
-                    translation: Vec3::new(0.0, 1.5, 0.0),
-                    scale: Vec3::new(0.16, 0.12, 0.16),
-                    ..default()
-                },
-            ));
             // shorts
             root.spawn((
                 Mesh3d(cuboid.clone()),
@@ -456,77 +500,167 @@ pub fn spawn_player(
                         ))
                         .id();
                     spawn_hair(head, p.hair, &cuboid, &sphere, &hair_mat);
+                    if slot % 2 == 0 {
+                        head.spawn((
+                            Mesh3d(torus.clone()),
+                            MeshMaterial3d(accent_mat.clone()),
+                            Transform {
+                                translation: Vec3::new(0.0, 0.3, 0.0),
+                                scale: Vec3::new(0.99, 1.0, 0.99),
+                                ..default()
+                            },
+                        ));
+                    }
                 })
                 .id();
-            spawn_jersey_number(root, &cuboid, &number_mat, jersey_number(id, slot));
-            let limb = |root: &mut RelatedSpawnerCommands<ChildOf>,
-                            pivot: Vec3,
-                            mesh: &Handle<Mesh>,
-                            mat: &Handle<StandardMaterial>,
-                            drop: f32,
-                            shoe: Option<&Handle<StandardMaterial>>| {
-                root.spawn((Transform::from_translation(pivot), Visibility::default()))
+            // Contact shadow (the root never leaves y = 0; jumps are animated on the torso).
+            root.spawn((
+                Mesh3d(cylinder.clone()),
+                MeshMaterial3d(shadow_mat),
+                Transform {
+                    translation: Vec3::new(0.0, 0.012, 0.0),
+                    scale: Vec3::new(0.9, 0.01, 0.9),
+                    ..default()
+                },
+            ));
+
+            // Arms: shoulder pivot → upper arm → elbow pivot → forearm + wristband + hand
+            for (sx, out_arm, out_elbow) in [
+                (-1.0f32, &mut l_arm, &mut l_elbow),
+                (1.0, &mut r_arm, &mut r_elbow),
+            ] {
+                let mut elbow_id = Entity::PLACEHOLDER;
+                let shoulder = root
+                    .spawn((
+                        Transform::from_xyz(sx * 0.34, 1.45, 0.0),
+                        Visibility::default(),
+                    ))
+                    .with_children(|a| {
+                        a.spawn((
+                            Mesh3d(sphere.clone()),
+                            MeshMaterial3d(jersey_mat.clone()),
+                            Transform {
+                                translation: Vec3::new(0.0, 0.0, 0.0),
+                                scale: Vec3::splat(0.1),
+                                ..default()
+                            },
+                        ));
+                        a.spawn((
+                            Mesh3d(upper_arm.clone()),
+                            MeshMaterial3d(skin.clone()),
+                            Transform::from_xyz(0.0, -0.15, 0.0),
+                        ));
+                        elbow_id = a
+                            .spawn((Transform::from_xyz(0.0, -0.3, 0.0), Visibility::default()))
+                            .with_children(|e| {
+                                e.spawn((
+                                    Mesh3d(forearm.clone()),
+                                    MeshMaterial3d(skin.clone()),
+                                    Transform::from_xyz(0.0, -0.14, 0.0),
+                                ));
+                                e.spawn((
+                                    Mesh3d(cylinder.clone()),
+                                    MeshMaterial3d(trim_mat.clone()),
+                                    Transform {
+                                        translation: Vec3::new(0.0, -0.23, 0.0),
+                                        scale: Vec3::new(0.14, 0.05, 0.14),
+                                        ..default()
+                                    },
+                                ));
+                                e.spawn((
+                                    Mesh3d(sphere.clone()),
+                                    MeshMaterial3d(skin.clone()),
+                                    Transform {
+                                        translation: Vec3::new(0.0, -0.31, 0.01),
+                                        scale: Vec3::new(0.065, 0.075, 0.05),
+                                        ..default()
+                                    },
+                                ));
+                            })
+                            .id();
+                    })
+                    .id();
+                *out_arm = shoulder;
+                *out_elbow = elbow_id;
+            }
+
+            // Legs: hip pivot → thigh → knee pivot → shin + sock + shoe + sole
+            for (sx, out_leg, out_knee) in [
+                (-1.0f32, &mut l_leg, &mut l_knee),
+                (1.0, &mut r_leg, &mut r_knee),
+            ] {
+                let mut knee_id = Entity::PLACEHOLDER;
+                let hip = root
+                    .spawn((
+                        Transform::from_xyz(sx * 0.15, 0.8, 0.0),
+                        Visibility::default(),
+                    ))
                     .with_children(|l| {
                         l.spawn((
-                            Mesh3d(mesh.clone()),
-                            MeshMaterial3d(mat.clone()),
-                            Transform::from_xyz(0.0, -drop, 0.0),
+                            Mesh3d(thigh.clone()),
+                            MeshMaterial3d(skin.clone()),
+                            Transform::from_xyz(0.0, -0.19, 0.0),
                         ));
-                        if let Some(shoe) = shoe {
-                            l.spawn((
-                                Mesh3d(cuboid.clone()),
-                                MeshMaterial3d(shoe.clone()),
-                                Transform {
-                                    translation: Vec3::new(0.0, -pivot.y + 0.07, 0.05),
-                                    scale: Vec3::new(0.18, 0.13, 0.32),
-                                    ..default()
-                                },
-                            ));
-                            l.spawn((
-                                Mesh3d(cuboid.clone()),
-                                MeshMaterial3d(sock_mat.clone()),
-                                Transform {
-                                    translation: Vec3::new(0.0, -pivot.y + 0.19, 0.0),
-                                    scale: Vec3::new(0.17, 0.1, 0.17),
-                                    ..default()
-                                },
-                            ));
-                        }
+                        knee_id = l
+                            .spawn((Transform::from_xyz(0.0, -0.38, 0.0), Visibility::default()))
+                            .with_children(|k| {
+                                k.spawn((
+                                    Mesh3d(sphere.clone()),
+                                    MeshMaterial3d(skin.clone()),
+                                    Transform {
+                                        translation: Vec3::new(0.0, 0.0, 0.0),
+                                        scale: Vec3::splat(0.085),
+                                        ..default()
+                                    },
+                                ));
+                                k.spawn((
+                                    Mesh3d(shin.clone()),
+                                    MeshMaterial3d(skin.clone()),
+                                    Transform::from_xyz(0.0, -0.16, 0.0),
+                                ));
+                                k.spawn((
+                                    Mesh3d(cuboid.clone()),
+                                    MeshMaterial3d(sock_mat.clone()),
+                                    Transform {
+                                        translation: Vec3::new(0.0, -0.3, 0.0),
+                                        scale: Vec3::new(0.17, 0.1, 0.17),
+                                        ..default()
+                                    },
+                                ));
+                                k.spawn((
+                                    Mesh3d(cuboid.clone()),
+                                    MeshMaterial3d(shoe.clone()),
+                                    Transform {
+                                        translation: Vec3::new(0.0, -0.365, 0.05),
+                                        scale: Vec3::new(0.18, 0.11, 0.32),
+                                        ..default()
+                                    },
+                                ));
+                                k.spawn((
+                                    Mesh3d(cuboid.clone()),
+                                    MeshMaterial3d(sole_mat.clone()),
+                                    Transform {
+                                        translation: Vec3::new(0.0, -0.405, 0.05),
+                                        scale: Vec3::new(0.19, 0.03, 0.34),
+                                        ..default()
+                                    },
+                                ));
+                                k.spawn((
+                                    Mesh3d(cuboid.clone()),
+                                    MeshMaterial3d(accent_mat.clone()),
+                                    Transform {
+                                        translation: Vec3::new(sx * 0.095, -0.36, 0.02),
+                                        scale: Vec3::new(0.01, 0.05, 0.2),
+                                        ..default()
+                                    },
+                                ));
+                            })
+                            .id();
                     })
-                    .id()
-            };
-            l_arm = limb(
-                root,
-                Vec3::new(-0.34, 1.45, 0.0),
-                &arm_mesh,
-                &skin,
-                0.3,
-                None,
-            );
-            r_arm = limb(
-                root,
-                Vec3::new(0.34, 1.45, 0.0),
-                &arm_mesh,
-                &skin,
-                0.3,
-                None,
-            );
-            l_leg = limb(
-                root,
-                Vec3::new(-0.15, 0.8, 0.0),
-                &leg_mesh,
-                &skin,
-                0.36,
-                Some(&shoe),
-            );
-            r_leg = limb(
-                root,
-                Vec3::new(0.15, 0.8, 0.0),
-                &leg_mesh,
-                &skin,
-                0.36,
-                Some(&shoe),
-            );
+                    .id();
+                *out_leg = hip;
+                *out_knee = knee_id;
+            }
         })
         .id();
 
@@ -538,6 +672,10 @@ pub fn spawn_player(
             r_arm,
             l_leg,
             r_leg,
+            l_elbow,
+            r_elbow,
+            l_knee,
+            r_knee,
         },
         FaceRig {
             brow_l,
@@ -580,6 +718,7 @@ fn spawn_jersey_number(
     cuboid: &Handle<Mesh>,
     mat: &Handle<StandardMaterial>,
     number: u8,
+    origin: Vec3,
 ) {
     if number >= 10 {
         spawn_digit(
@@ -587,11 +726,41 @@ fn spawn_jersey_number(
             cuboid,
             mat,
             number / 10,
-            Vec3::new(-0.07, 1.20, 0.175),
+            origin + Vec3::new(-0.07, 0.0, 0.0),
+            false,
         );
-        spawn_digit(root, cuboid, mat, number % 10, Vec3::new(0.07, 1.20, 0.175));
+        spawn_digit(
+            root,
+            cuboid,
+            mat,
+            number % 10,
+            origin + Vec3::new(0.07, 0.0, 0.0),
+            false,
+        );
     } else {
-        spawn_digit(root, cuboid, mat, number, Vec3::new(0.0, 1.20, 0.175));
+        spawn_digit(root, cuboid, mat, number, origin, false);
+    }
+    // Back number: mirrored glyphs and swapped order so it reads correctly from behind
+    let back = origin + Vec3::new(0.0, 0.12, -0.35);
+    if number >= 10 {
+        spawn_digit(
+            root,
+            cuboid,
+            mat,
+            number / 10,
+            back + Vec3::new(0.07, 0.0, 0.0),
+            true,
+        );
+        spawn_digit(
+            root,
+            cuboid,
+            mat,
+            number % 10,
+            back + Vec3::new(-0.07, 0.0, 0.0),
+            true,
+        );
+    } else {
+        spawn_digit(root, cuboid, mat, number, back, true);
     }
 }
 
@@ -601,6 +770,7 @@ fn spawn_digit(
     mat: &Handle<StandardMaterial>,
     digit: u8,
     origin: Vec3,
+    mirror: bool,
 ) {
     const A: u8 = 1 << 0;
     const B: u8 = 1 << 1;
@@ -637,11 +807,16 @@ fn spawn_digit(
     ];
     for (i, (off, scale)) in segs.iter().enumerate() {
         if mask & (1 << i) != 0 {
+            let off = if mirror {
+                Vec3::new(-off.x, off.y, off.z)
+            } else {
+                *off
+            };
             root.spawn((
                 Mesh3d(cuboid.clone()),
                 MeshMaterial3d(mat.clone()),
                 Transform {
-                    translation: origin + *off,
+                    translation: origin + off,
                     scale: *scale,
                     ..default()
                 },
@@ -878,70 +1053,191 @@ fn face_velocity(
 fn animate_rigs(
     time: Res<Time>,
     paused: Res<Paused>,
-    mut players: Query<(&MoveVel, &Pose, &mut PoseClock, &Rig, &Stamina)>,
-    mut xforms: Query<&mut Transform, Without<Player>>,
+    ball: Query<(&Transform, &crate::ball::BallState), With<crate::ball::Ball>>,
+    mut players: Query<
+        (
+            Entity,
+            &Transform,
+            &MoveVel,
+            &Pose,
+            &mut PoseClock,
+            &Rig,
+            &Stamina,
+        ),
+        With<Player>,
+    >,
+    mut xforms: Query<&mut Transform, (Without<Player>, Without<crate::ball::Ball>)>,
 ) {
     if paused.0 {
         return;
     }
     let dt = time.delta_secs();
-    for (vel, pose, mut clock, rig, _stam) in &mut players {
+    let ball_info = ball.single().ok().map(|(t, s)| (t.translation, s.holder));
+    for (entity, ptf, vel, pose, mut clock, rig, _stam) in &mut players {
         clock.0 += dt;
         let t = clock.0;
         let spd = Vec3::new(vel.0.x, 0.0, vel.0.z).length();
         let run = (spd / 6.0).clamp(0.0, 1.6);
         let pump = t * (8.0 + run * 6.0);
+        let holding = matches!(ball_info, Some((_, Some(h))) if h == entity);
+        // Ball height in the handler's local frame drives the dribbling arm.
+        let ball_h = ball_info
+            .map(|(bp, _)| ((bp.y - ptf.translation.y) / ptf.scale.y - 0.18) / 0.75)
+            .unwrap_or(0.5)
+            .clamp(0.0, 1.0);
+
         let ids = [
-            rig.torso, rig.head, rig.l_arm, rig.r_arm, rig.l_leg, rig.r_leg,
+            rig.torso,
+            rig.head,
+            rig.l_arm,
+            rig.r_arm,
+            rig.l_leg,
+            rig.r_leg,
+            rig.l_elbow,
+            rig.r_elbow,
+            rig.l_knee,
+            rig.r_knee,
         ];
         let Ok(mut parts) = xforms.get_many_mut(ids) else {
             continue;
         };
-        let [torso, head, l_arm, r_arm, l_leg, r_leg] = &mut parts;
+        let [torso, head, l_arm, r_arm, l_leg, r_leg, l_elbow, r_elbow, l_knee, r_knee] =
+            &mut parts;
+
+        // A-pose defaults; every pose below overrides what it needs.
+        let splay_l = Quat::from_rotation_z(-0.14);
+        let splay_r = Quat::from_rotation_z(0.14);
+        torso.rotation = Quat::IDENTITY;
+        let mut torso_y = 1.15;
+        let mut arm_l = splay_l * Quat::from_rotation_x((t * 1.4).sin() * 0.06);
+        let mut arm_r = splay_r * Quat::from_rotation_x((t * 1.4).cos() * 0.06);
+        let mut elbow_l = Quat::from_rotation_x(-0.35);
+        let mut elbow_r = Quat::from_rotation_x(-0.35);
+        let mut leg_l = Quat::IDENTITY;
+        let mut leg_r = Quat::IDENTITY;
+        let mut knee_l = Quat::from_rotation_x(0.08);
+        let mut knee_r = Quat::from_rotation_x(0.08);
+
+        // Dribble: right hand rides the ball, palm down.
+        let dribble = |arm: &mut Quat, elbow: &mut Quat| {
+            *arm = splay_r * Quat::from_rotation_x(-(0.25 + ball_h * 0.55));
+            *elbow = Quat::from_rotation_x(-(0.15 + ball_h * 0.55));
+        };
+
         match *pose {
             Pose::Idle => {
-                torso.translation.y = 1.15 + t.sin() * 0.03;
-                l_arm.rotation = Quat::from_rotation_x((t * 1.4).sin() * 0.08);
-                r_arm.rotation = Quat::from_rotation_x((t * 1.4).cos() * 0.08);
-                l_leg.rotation = Quat::IDENTITY;
-                r_leg.rotation = Quat::IDENTITY;
+                torso_y = 1.15 + (t * 2.4).sin() * 0.012;
+                // Ready stance: slight knee bend, hands up when guarding
+                knee_l = Quat::from_rotation_x(0.18);
+                knee_r = Quat::from_rotation_x(0.18);
+                if holding {
+                    dribble(&mut arm_r, &mut elbow_r);
+                    arm_l = splay_l * Quat::from_rotation_x(-0.55);
+                    elbow_l = Quat::from_rotation_x(-1.1);
+                } else {
+                    arm_l = splay_l * Quat::from_rotation_x(-0.35);
+                    arm_r = splay_r * Quat::from_rotation_x(-0.35);
+                    elbow_l = Quat::from_rotation_x(-1.0);
+                    elbow_r = Quat::from_rotation_x(-1.0);
+                }
             }
             Pose::Run | Pose::Sprint => {
-                let amp = if *pose == Pose::Sprint { 0.7 } else { 0.5 };
-                l_leg.rotation = Quat::from_rotation_x(pump.sin() * amp);
-                r_leg.rotation = Quat::from_rotation_x(-pump.sin() * amp);
-                l_arm.rotation = Quat::from_rotation_x(-pump.sin() * amp * 0.8);
-                r_arm.rotation = Quat::from_rotation_x(pump.sin() * amp * 0.8);
-                torso.rotation = Quat::from_rotation_x(-0.12 * run);
+                let amp = if *pose == Pose::Sprint { 0.8 } else { 0.55 };
+                let swing = pump.sin();
+                leg_l = Quat::from_rotation_x(swing * amp);
+                leg_r = Quat::from_rotation_x(-swing * amp);
+                // Knee folds hardest while the leg recovers from behind.
+                let fold_l = 0.2 + 0.9 * (-(pump - 0.7).sin()).max(0.0) * amp;
+                let fold_r = 0.2 + 0.9 * ((pump - 0.7).sin()).max(0.0) * amp;
+                knee_l = Quat::from_rotation_x(fold_l);
+                knee_r = Quat::from_rotation_x(fold_r);
+                arm_l = splay_l * Quat::from_rotation_x(-swing * amp * 0.9 - 0.2);
+                arm_r = splay_r * Quat::from_rotation_x(swing * amp * 0.9 - 0.2);
+                elbow_l = Quat::from_rotation_x(-1.15);
+                elbow_r = Quat::from_rotation_x(-1.15);
+                if holding {
+                    dribble(&mut arm_r, &mut elbow_r);
+                }
+                torso.rotation = Quat::from_rotation_x(-0.14 * run);
+                torso_y = 1.15 + swing.abs() * 0.02;
             }
             Pose::Shoot => {
-                l_arm.rotation = Quat::from_rotation_x(-2.2);
-                r_arm.rotation = Quat::from_rotation_x(-2.4);
-                torso.translation.y = 1.15 + 0.25;
+                let k = (t / 0.3).clamp(0.0, 1.0);
+                arm_l = splay_l * Quat::from_rotation_x(-2.3);
+                arm_r = splay_r * Quat::from_rotation_x(-2.55);
+                // Elbows extend through the release, wrist snaps last
+                elbow_l = Quat::from_rotation_x(-1.5 + k * 1.1);
+                elbow_r = Quat::from_rotation_x(-1.6 + k * 1.45);
+                knee_l = Quat::from_rotation_x(0.6 * (1.0 - k));
+                knee_r = Quat::from_rotation_x(0.6 * (1.0 - k));
+                torso_y = 1.15 + 0.28 * k;
+                torso.rotation = Quat::from_rotation_x(-0.05);
             }
             Pose::Dunk => {
-                l_arm.rotation = Quat::from_rotation_x(-2.6);
-                r_arm.rotation = Quat::from_rotation_x(-2.8);
-                torso.translation.y = 1.35;
-                torso.rotation = Quat::from_rotation_z(0.25);
+                arm_l = splay_l * Quat::from_rotation_x(-2.7);
+                arm_r = splay_r * Quat::from_rotation_x(-2.9);
+                elbow_l = Quat::from_rotation_x(-0.35);
+                elbow_r = Quat::from_rotation_x(-0.2);
+                knee_l = Quat::from_rotation_x(1.1);
+                knee_r = Quat::from_rotation_x(0.7);
+                leg_l = Quat::from_rotation_x(-0.5);
+                leg_r = Quat::from_rotation_x(0.2);
+                torso_y = 1.38;
+                torso.rotation = Quat::from_rotation_z(0.2) * Quat::from_rotation_x(-0.1);
             }
             Pose::Pass => {
-                r_arm.rotation = Quat::from_rotation_y(-1.2) * Quat::from_rotation_x(-0.6);
+                let k = (t / 0.2).clamp(0.0, 1.0);
+                arm_l = splay_l * Quat::from_rotation_x(-1.1 - k * 0.5);
+                arm_r = splay_r * Quat::from_rotation_x(-1.1 - k * 0.5);
+                elbow_l = Quat::from_rotation_x(-1.2 + k * 1.0);
+                elbow_r = Quat::from_rotation_x(-1.2 + k * 1.0);
+                knee_l = Quat::from_rotation_x(0.3);
+                knee_r = Quat::from_rotation_x(0.3);
+                torso.rotation = Quat::from_rotation_x(-0.12);
             }
             Pose::Block => {
-                l_arm.rotation = Quat::from_rotation_x(-2.8);
-                r_arm.rotation = Quat::from_rotation_x(-2.8);
-                torso.translation.y = 1.35;
+                arm_l = splay_l * Quat::from_rotation_x(-3.0);
+                arm_r = splay_r * Quat::from_rotation_x(-3.0);
+                elbow_l = Quat::from_rotation_x(-0.1);
+                elbow_r = Quat::from_rotation_x(-0.1);
+                knee_l = Quat::from_rotation_x(0.35);
+                knee_r = Quat::from_rotation_x(0.35);
+                torso_y = 1.38;
             }
             Pose::Celebrate => {
-                l_arm.rotation = Quat::from_rotation_x(-2.5);
-                r_arm.rotation = Quat::from_rotation_x(-2.5);
-                torso.translation.y = 1.15 + (t * 8.0).sin().abs() * 0.12;
+                let bounce = (t * 8.0).sin();
+                arm_l = splay_l * Quat::from_rotation_x(-2.6) * Quat::from_rotation_z(-0.3);
+                arm_r = splay_r * Quat::from_rotation_x(-2.6) * Quat::from_rotation_z(0.3);
+                elbow_l = Quat::from_rotation_x(-0.7 + bounce * 0.5);
+                elbow_r = Quat::from_rotation_x(-0.7 - bounce * 0.5);
+                knee_l = Quat::from_rotation_x(0.25 + bounce.abs() * 0.3);
+                knee_r = Quat::from_rotation_x(0.25 + bounce.abs() * 0.3);
+                torso_y = 1.15 + bounce.abs() * 0.14;
             }
             Pose::Stumble => {
-                torso.rotation = Quat::from_rotation_x(0.4);
+                torso.rotation = Quat::from_rotation_x(0.42);
+                arm_l = splay_l * Quat::from_rotation_x(-1.2);
+                arm_r = splay_r * Quat::from_rotation_x(-0.9);
+                elbow_l = Quat::from_rotation_x(-0.6);
+                elbow_r = Quat::from_rotation_x(-0.6);
+                knee_l = Quat::from_rotation_x(0.55);
+                knee_r = Quat::from_rotation_x(0.35);
+                leg_l = Quat::from_rotation_x(0.3);
             }
         }
+
+        // Smooth toward targets so pose switches never pop.
+        let k = 1.0 - (-18.0 * dt).exp();
+        torso.translation.y += (torso_y - torso.translation.y) * k;
+        l_arm.rotation = l_arm.rotation.slerp(arm_l, k);
+        r_arm.rotation = r_arm.rotation.slerp(arm_r, k);
+        l_elbow.rotation = l_elbow.rotation.slerp(elbow_l, k);
+        r_elbow.rotation = r_elbow.rotation.slerp(elbow_r, k);
+        l_leg.rotation = l_leg.rotation.slerp(leg_l, k);
+        r_leg.rotation = r_leg.rotation.slerp(leg_r, k);
+        l_knee.rotation = l_knee.rotation.slerp(knee_l, k);
+        r_knee.rotation = r_knee.rotation.slerp(knee_r, k);
+
         let bob = match *pose {
             Pose::Idle => (t * 2.4).sin() * 0.012,
             Pose::Run | Pose::Sprint => pump.sin().abs() * (0.016 + run * 0.01),
@@ -949,7 +1245,8 @@ fn animate_rigs(
             Pose::Shoot | Pose::Dunk | Pose::Block => 0.01,
             _ => (t * 3.5).sin() * 0.008,
         };
-        head.translation.y = 1.72 + bob;
+        // Head rides the torso lift (shots, dunks, blocks) instead of staying planted.
+        head.translation.y = 1.72 + bob + (torso.translation.y - 1.15);
     }
 }
 
