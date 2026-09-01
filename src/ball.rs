@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 
 use crate::sim::{
-    apply_aero, BALL_RADIUS, COURT_HALF_LEN, COURT_HALF_WID, GRAVITY, HOOP_X, RIM_HEIGHT,
-    RIM_RADIUS, cylinder_score,
+    apply_aero, cylinder_score, BALL_RADIUS, COURT_HALF_LEN, COURT_HALF_WID, GRAVITY, HOOP_X,
+    RIM_HEIGHT, RIM_RADIUS,
 };
 use crate::states::{AppState, MatchConfig, Paused};
 
@@ -21,6 +21,9 @@ impl Plugin for BallPlugin {
             );
     }
 }
+
+/// Arcade ball: rendered bigger than the sim radius so it reads from the broadcast lens.
+pub const VISUAL_RADIUS: f32 = BALL_RADIUS * 1.55;
 
 #[derive(Component)]
 pub struct Ball;
@@ -101,8 +104,8 @@ pub fn spawn_ball(
         ..default()
     });
     let glow = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 0.45, 0.1, 0.22),
-        emissive: LinearRgba::new(1.2, 0.35, 0.05, 1.0),
+        base_color: Color::srgba(1.0, 0.45, 0.1, 0.16),
+        emissive: LinearRgba::new(1.6, 0.45, 0.06, 1.0),
         unlit: true,
         alpha_mode: AlphaMode::Blend,
         ..default()
@@ -130,27 +133,31 @@ pub fn spawn_ball(
                 rim_hits: 0,
                 release_was_three: false,
             },
-            Mesh3d(meshes.add(Sphere::new(BALL_RADIUS * 1.15))),
+            Mesh3d(meshes.add(Sphere::new(VISUAL_RADIUS))),
             MeshMaterial3d(mat),
             Transform::from_translation(pos),
             crate::court::ArenaRoot,
             DespawnOnExit(AppState::Playing),
         ))
         .with_children(|b| {
+            // Seams: three great-circle rings so the spin reads from any camera
+            let seam = meshes.add(Torus {
+                minor_radius: 0.008,
+                major_radius: VISUAL_RADIUS * 0.995,
+            });
+            b.spawn((Mesh3d(seam.clone()), MeshMaterial3d(stripe.clone())));
             b.spawn((
-                Mesh3d(meshes.add(Cuboid::new(BALL_RADIUS * 2.4, 0.018, 0.018))),
+                Mesh3d(seam.clone()),
                 MeshMaterial3d(stripe.clone()),
+                Transform::from_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
             ));
             b.spawn((
-                Mesh3d(meshes.add(Cuboid::new(0.018, BALL_RADIUS * 2.4, 0.018))),
-                MeshMaterial3d(stripe.clone()),
-            ));
-            b.spawn((
-                Mesh3d(meshes.add(Cuboid::new(0.018, 0.018, BALL_RADIUS * 2.4))),
+                Mesh3d(seam),
                 MeshMaterial3d(stripe),
+                Transform::from_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
             ));
             b.spawn((
-                Mesh3d(meshes.add(Sphere::new(BALL_RADIUS * 1.55))),
+                Mesh3d(meshes.add(Sphere::new(VISUAL_RADIUS * 1.32))),
                 MeshMaterial3d(glow),
             ));
         })
@@ -158,7 +165,7 @@ pub fn spawn_ball(
 
     commands.spawn((
         BallShadow,
-        Mesh3d(meshes.add(Cylinder::new(0.22, 0.02))),
+        Mesh3d(meshes.add(Cylinder::new(0.26, 0.02))),
         MeshMaterial3d(shadow_mat),
         Transform::from_xyz(pos.x, 0.02, pos.z),
         crate::court::ArenaRoot,
@@ -173,17 +180,34 @@ fn integrate_ball(
     paused: Res<Paused>,
     config: Res<MatchConfig>,
     mut floor: MessageWriter<FloorBounceEvent>,
-    mut q: Query<(&mut Transform, &mut BallVel, &mut BallSpin, &mut BallPrev, &BallState), With<Ball>>,
+    mut q: Query<
+        (
+            &mut Transform,
+            &mut BallVel,
+            &mut BallSpin,
+            &mut BallPrev,
+            &mut BallState,
+        ),
+        With<Ball>,
+    >,
 ) {
     if paused.0 {
         return;
     }
     let dt = time.delta_secs();
     let theme = config.arena.theme();
-    for (mut tf, mut vel, mut spin, mut prev, state) in &mut q {
+    for (mut tf, mut vel, mut spin, mut prev, mut state) in &mut q {
         prev.0 = tf.translation;
         if state.hold == Hold::Held {
             continue;
+        }
+        // A shot or pass that has died on the floor is a live loose ball again, so the AI
+        // hunts it instead of leaving it parked at midcourt.
+        if matches!(state.hold, Hold::Shot | Hold::Pass)
+            && tf.translation.y < 0.6
+            && vel.0.length() < 2.4
+        {
+            state.hold = Hold::Loose;
         }
         vel.0.y -= GRAVITY * dt * theme.hangtime.recip().max(0.7);
         // Shots stay on the solved ballistic so a green make still threads the rim.
@@ -198,8 +222,8 @@ fn integrate_ball(
             tf.rotate(Quat::from_axis_angle(spin.0.normalize(), omega * dt));
         }
 
-        if tf.translation.y < BALL_RADIUS {
-            tf.translation.y = BALL_RADIUS;
+        if tf.translation.y < VISUAL_RADIUS {
+            tf.translation.y = VISUAL_RADIUS;
             if vel.0.y < 0.0 {
                 let impact = vel.0.y.abs();
                 vel.0.y = -vel.0.y * theme.bounce;
@@ -237,7 +261,13 @@ fn hoop_collision(
     mut boards: MessageWriter<BackboardHitEvent>,
     paused: Res<Paused>,
     mut ball_q: Query<
-        (&mut Transform, &mut BallVel, &mut BallSpin, &BallPrev, &mut BallState),
+        (
+            &mut Transform,
+            &mut BallVel,
+            &mut BallSpin,
+            &BallPrev,
+            &mut BallState,
+        ),
         With<Ball>,
     >,
 ) {
@@ -293,10 +323,7 @@ fn hoop_collision(
                 }
                 spin.0 *= 0.82;
                 state.rim_hits = state.rim_hits.saturating_add(1);
-                rims.write(RimHitEvent {
-                    pos: p,
-                    speed,
-                });
+                rims.write(RimHitEvent { pos: p, speed });
             }
         }
 
@@ -328,7 +355,7 @@ fn follow_ball_shadow(
     let Ok(mut st) = shadow.single_mut() else {
         return;
     };
-    let height = btf.translation.y.max(BALL_RADIUS);
+    let height = btf.translation.y.max(VISUAL_RADIUS);
     let scale = (0.55 + height * 0.12).clamp(0.45, 1.6);
     st.translation = Vec3::new(btf.translation.x, 0.025, btf.translation.z);
     st.scale = Vec3::new(scale, 1.0, scale);

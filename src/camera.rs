@@ -1,5 +1,7 @@
 use bevy::core_pipeline::tonemapping::Tonemapping;
+use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use bevy::render::view::Hdr;
 
 use crate::ball::{Ball, BallState, BucketEvent, Hold};
 use crate::court::RimMarker;
@@ -128,6 +130,12 @@ fn spawn_camera(mut commands: Commands) {
         GameCam,
         Camera3d::default(),
         Msaa::Off,
+        Hdr,
+        Bloom {
+            intensity: 0.18,
+            low_frequency_boost: 0.55,
+            ..Bloom::NATURAL
+        },
         Camera {
             order: 0,
             clear_color: ClearColorConfig::Custom(Color::srgb(0.02, 0.03, 0.06)),
@@ -656,18 +664,18 @@ fn frame_shot(
     } else {
         hoop.x.signum()
     };
-    let (pos, look_at, fov, pos_l, rot_l) = match shot {
+    let (pos, look_at, fov, pos_l, rot_l): (Vec3, Vec3, f32, f32, f32) = match shot {
         CameraShot::BroadcastSideline => (
-            Vec3::new(look.x * 0.15, 10.5, 16.5),
-            look,
-            DEFAULT_FOV,
+            Vec3::new(look.x * 0.55, 6.9, 11.8),
+            look + Vec3::Y * 0.3,
+            46.0,
             2.8,
             3.5,
         ),
         CameraShot::BroadcastEndzone => (
-            Vec3::new(hoop.x + hoop_sign * 4.2, 7.6, 4.0),
-            look,
-            50.0,
+            Vec3::new(hoop.x + hoop_sign * 3.6, 5.8, 3.6),
+            look + Vec3::Y * 0.4,
+            48.0,
             2.6,
             3.2,
         ),
@@ -678,7 +686,7 @@ fn frame_shot(
             3.4,
             4.0,
         ),
-        CameraShot::TacticalTopDown => (Vec3::new(look.x, 28.0, 0.1), look, 55.0, 2.2, 2.8),
+        CameraShot::TacticalTopDown => (Vec3::new(look.x * 0.6, 21.0, 4.0), look, 52.0, 2.2, 2.8),
         CameraShot::CinemaLowHero => (
             Vec3::new(look.x - 6.0, 2.4, look.z + 7.0),
             look + Vec3::Y * 0.2,
@@ -749,14 +757,26 @@ fn frame_shot(
             6.2,
         ),
         CameraShot::BuzzerBeat => (
-            Vec3::new(look.x * 0.22, 8.4, 15.2),
-            look + Vec3::Y * 0.3,
-            48.0,
+            Vec3::new(look.x * 0.5, 6.6, 11.4),
+            look + Vec3::Y * 0.5,
+            46.0,
             3.6,
             4.2,
         ),
-        CameraShot::ThreePointWide => (Vec3::new(look.x * 0.12, 12.2, 18.2), look, 58.0, 2.5, 3.0),
-        CameraShot::LogoHalfCourt => (Vec3::new(look.x * 0.05, 14.4, 17.4), look, 60.0, 2.3, 2.8),
+        CameraShot::ThreePointWide => (
+            Vec3::new(look.x * 0.4, 8.2, 13.6),
+            look + Vec3::Y * 0.8,
+            52.0,
+            2.5,
+            3.0,
+        ),
+        CameraShot::LogoHalfCourt => (
+            Vec3::new(look.x * 0.3, 9.6, 14.6),
+            look + Vec3::Y * 1.0,
+            54.0,
+            2.3,
+            2.8,
+        ),
         CameraShot::InboundBaseline => (
             Vec3::new(actor.x.signum() * 16.2, 5.6, actor.z * 0.25),
             actor + Vec3::Y * 1.1,
@@ -765,9 +785,9 @@ fn frame_shot(
             3.4,
         ),
         CameraShot::FastBreakWide => (
-            Vec3::new(look.x * 0.4 - actor.x.signum() * 2.0, 9.2, 17.4),
-            look,
-            56.0,
+            Vec3::new(look.x * 0.55 - actor.x.signum() * 1.5, 7.2, 12.6),
+            look + Vec3::Y * 0.4,
+            50.0,
             3.2,
             3.6,
         ),

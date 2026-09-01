@@ -4,6 +4,7 @@ mod audio;
 mod ball;
 mod camera;
 mod court;
+mod courtpaint;
 mod fx;
 mod gameplay;
 mod input;

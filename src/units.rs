@@ -238,8 +238,15 @@ pub fn spawn_player(
     });
 
     let sphere = meshes.add(Sphere::new(1.0));
-    let capsule = meshes.add(Capsule3d::new(0.12, 0.38));
     let cuboid = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let cylinder = meshes.add(Cylinder::new(0.5, 1.0));
+    let arm_mesh = meshes.add(Capsule3d::new(0.075, 0.46));
+    let leg_mesh = meshes.add(Capsule3d::new(0.09, 0.5));
+    let sock_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        perceptual_roughness: 0.9,
+        ..default()
+    });
 
     let mut torso_id = Entity::PLACEHOLDER;
     let mut head_id = Entity::PLACEHOLDER;
@@ -283,17 +290,61 @@ pub fn spawn_player(
                     MeshMaterial3d(jersey_mat.clone()),
                     Transform {
                         translation: Vec3::new(0.0, 1.15, 0.0),
-                        scale: Vec3::new(0.55, 0.7, 0.32),
+                        scale: Vec3::new(0.5, 0.62, 0.3),
                         ..default()
                     },
+                    Visibility::default(),
                 ))
+                .with_children(|t| {
+                    // Shoulder mass + straps + waistband live on the torso so they ride the lean.
+                    t.spawn((
+                        Mesh3d(cuboid.clone()),
+                        MeshMaterial3d(jersey_mat.clone()),
+                        Transform {
+                            translation: Vec3::new(0.0, 0.3, 0.0),
+                            scale: Vec3::new(1.14, 0.42, 1.06),
+                            ..default()
+                        },
+                    ));
+                    for sx in [-1.0, 1.0] {
+                        t.spawn((
+                            Mesh3d(cuboid.clone()),
+                            MeshMaterial3d(trim_mat.clone()),
+                            Transform {
+                                translation: Vec3::new(sx * 0.3, 0.42, 0.0),
+                                scale: Vec3::new(0.22, 0.22, 1.08),
+                                ..default()
+                            },
+                        ));
+                    }
+                    t.spawn((
+                        Mesh3d(cuboid.clone()),
+                        MeshMaterial3d(trim_mat.clone()),
+                        Transform {
+                            translation: Vec3::new(0.0, -0.5, 0.0),
+                            scale: Vec3::new(1.02, 0.1, 1.04),
+                            ..default()
+                        },
+                    ));
+                })
                 .id();
+            // neck
+            root.spawn((
+                Mesh3d(cylinder.clone()),
+                MeshMaterial3d(skin.clone()),
+                Transform {
+                    translation: Vec3::new(0.0, 1.5, 0.0),
+                    scale: Vec3::new(0.16, 0.12, 0.16),
+                    ..default()
+                },
+            ));
+            // shorts
             root.spawn((
                 Mesh3d(cuboid.clone()),
                 MeshMaterial3d(trim_mat.clone()),
                 Transform {
-                    translation: Vec3::new(0.0, 1.15, -0.12),
-                    scale: Vec3::new(0.22, 0.28, 0.12),
+                    translation: Vec3::new(0.0, 0.72, 0.0),
+                    scale: Vec3::new(0.52, 0.34, 0.34),
                     ..default()
                 },
             ));
@@ -408,52 +459,74 @@ pub fn spawn_player(
                 })
                 .id();
             spawn_jersey_number(root, &cuboid, &number_mat, jersey_number(id, slot));
-            l_arm = root
-                .spawn((
-                    Mesh3d(capsule.clone()),
-                    MeshMaterial3d(skin.clone()),
-                    Transform::from_xyz(-0.42, 1.2, 0.0),
-                ))
-                .id();
-            r_arm = root
-                .spawn((
-                    Mesh3d(capsule.clone()),
-                    MeshMaterial3d(skin.clone()),
-                    Transform::from_xyz(0.42, 1.2, 0.0),
-                ))
-                .id();
-            l_leg = root
-                .spawn((
-                    Mesh3d(capsule.clone()),
-                    MeshMaterial3d(trim_mat.clone()),
-                    Transform::from_xyz(-0.16, 0.48, 0.0),
-                ))
-                .id();
-            r_leg = root
-                .spawn((
-                    Mesh3d(capsule),
-                    MeshMaterial3d(trim_mat),
-                    Transform::from_xyz(0.16, 0.48, 0.0),
-                ))
-                .id();
-            root.spawn((
-                Mesh3d(cuboid.clone()),
-                MeshMaterial3d(shoe.clone()),
-                Transform {
-                    translation: Vec3::new(-0.16, 0.08, 0.05),
-                    scale: Vec3::new(0.16, 0.08, 0.28),
-                    ..default()
-                },
-            ));
-            root.spawn((
-                Mesh3d(cuboid),
-                MeshMaterial3d(shoe),
-                Transform {
-                    translation: Vec3::new(0.16, 0.08, 0.05),
-                    scale: Vec3::new(0.16, 0.08, 0.28),
-                    ..default()
-                },
-            ));
+            let mut limb = |root: &mut RelatedSpawnerCommands<ChildOf>,
+                            pivot: Vec3,
+                            mesh: &Handle<Mesh>,
+                            mat: &Handle<StandardMaterial>,
+                            drop: f32,
+                            shoe: Option<&Handle<StandardMaterial>>| {
+                root.spawn((Transform::from_translation(pivot), Visibility::default()))
+                    .with_children(|l| {
+                        l.spawn((
+                            Mesh3d(mesh.clone()),
+                            MeshMaterial3d(mat.clone()),
+                            Transform::from_xyz(0.0, -drop, 0.0),
+                        ));
+                        if let Some(shoe) = shoe {
+                            l.spawn((
+                                Mesh3d(cuboid.clone()),
+                                MeshMaterial3d(shoe.clone()),
+                                Transform {
+                                    translation: Vec3::new(0.0, -pivot.y + 0.07, 0.05),
+                                    scale: Vec3::new(0.18, 0.13, 0.32),
+                                    ..default()
+                                },
+                            ));
+                            l.spawn((
+                                Mesh3d(cuboid.clone()),
+                                MeshMaterial3d(sock_mat.clone()),
+                                Transform {
+                                    translation: Vec3::new(0.0, -pivot.y + 0.19, 0.0),
+                                    scale: Vec3::new(0.17, 0.1, 0.17),
+                                    ..default()
+                                },
+                            ));
+                        }
+                    })
+                    .id()
+            };
+            l_arm = limb(
+                root,
+                Vec3::new(-0.34, 1.45, 0.0),
+                &arm_mesh,
+                &skin,
+                0.3,
+                None,
+            );
+            r_arm = limb(
+                root,
+                Vec3::new(0.34, 1.45, 0.0),
+                &arm_mesh,
+                &skin,
+                0.3,
+                None,
+            );
+            l_leg = limb(
+                root,
+                Vec3::new(-0.15, 0.8, 0.0),
+                &leg_mesh,
+                &skin,
+                0.36,
+                Some(&shoe),
+            );
+            r_leg = limb(
+                root,
+                Vec3::new(0.15, 0.8, 0.0),
+                &leg_mesh,
+                &skin,
+                0.36,
+                Some(&shoe),
+            );
         })
         .id();
 

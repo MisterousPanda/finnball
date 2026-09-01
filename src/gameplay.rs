@@ -6,8 +6,7 @@ use crate::roster::Side;
 use crate::sim::{
     ballistic_velocity, clamp_to_court, classify_shot, contest_factor, dribble_cadence,
     flight_time_for_distance, in_paint, meter_accuracy, release_height, release_spin, shot_kind,
-    shot_make_chance, steal_chance, PassKind, ShotType, BALL_RADIUS, GRAVITY, HOOP_X, PAINT_DEPTH,
-    RIM_HEIGHT,
+    shot_make_chance, steal_chance, PassKind, ShotType, GRAVITY, HOOP_X, PAINT_DEPTH, RIM_HEIGHT,
 };
 use crate::states::{AppState, GameMode, MatchConfig, Paused};
 use crate::units::{
@@ -514,9 +513,9 @@ fn follow_dribble(
             pos: btf.translation,
         });
     }
-    let peak = (0.38 + speed * 0.015).clamp(0.28, 0.52);
-    let bounce = BALL_RADIUS + (1.0 + phase.cos()) * 0.5 * peak;
-    let hand = ptf.right() * 0.38 + ptf.forward() * 0.18;
+    let peak = (0.62 + speed * 0.02).clamp(0.5, 0.8);
+    let bounce = crate::ball::VISUAL_RADIUS + (1.0 + phase.cos()) * 0.5 * peak;
+    let hand = ptf.right() * 0.46 + ptf.forward() * 0.22;
     let height = if matches!(*pose, Pose::Shoot | Pose::Dunk) {
         1.85
     } else {
@@ -563,7 +562,7 @@ fn pickup_loose_ball(
     let mut best: Option<(Entity, f32)> = None;
     for (e, tf, r, _p, _, _) in &players {
         let d = tf.translation.distance(btf.translation);
-        let reach = 0.85 + r.height * 0.12 + r.rebound / 220.0;
+        let reach = 1.05 + r.height * 0.12 + r.rebound / 220.0;
         if d < reach {
             let score = r.rebound + (2.0 - d) * 20.0;
             if best.map(|(_, s)| score > s).unwrap_or(true) {

@@ -26,7 +26,7 @@ fn ai_move(
     time: Res<Time<Fixed>>,
     paused: Res<Paused>,
     control: Res<LiveControl>,
-    ball: Query<(&Transform, &BallState), (With<Ball>, Without<Player>)>,
+    ball: Query<(&Transform, &BallState, &crate::ball::BallVel), (With<Ball>, Without<Player>)>,
     mut players: Query<
         (
             Entity,
@@ -45,9 +45,13 @@ fn ai_move(
         return;
     }
     let dt = time.delta_secs();
-    let Ok((btf, bstate)) = ball.single() else {
+    let Ok((btf, bstate, bvel)) = ball.single() else {
         return;
     };
+    let ball_live_loose = bstate.hold == Hold::Loose
+        || (matches!(bstate.hold, Hold::Shot | Hold::Pass)
+            && btf.translation.y < 1.6
+            && bvel.0.length() < 7.0);
     let holder_side = bstate.holder.and_then(|h| {
         players
             .iter()
@@ -66,6 +70,21 @@ fn ai_move(
             )
         })
         .collect();
+    // Only the closest AI on each team chases a loose ball; the rest keep their spacing.
+    let ball_flat = btf.translation.with_y(0.0);
+    let hunter_for = |side: Side| -> Option<Entity> {
+        snapshot
+            .iter()
+            .filter(|(_, s, _, human)| *s == side && !*human)
+            .min_by(|a, b| {
+                a.2.with_y(0.0)
+                    .distance(ball_flat)
+                    .partial_cmp(&b.2.with_y(0.0).distance(ball_flat))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(e, ..)| *e)
+    };
+    let hunters = [hunter_for(Side::Home), hunter_for(Side::Away)];
 
     for (e, p, ratings, mut tf, mut vel, pose, stam, mut brain) in &mut players {
         if control.entity == Some(e) {
@@ -114,8 +133,8 @@ fn ai_move(
         };
 
         // Loose ball hunt
-        let dest = if bstate.hold == Hold::Loose {
-            btf.translation.with_y(0.0)
+        let dest = if ball_live_loose && hunters.contains(&Some(e)) {
+            ball_flat
         } else {
             target
         };
@@ -134,7 +153,6 @@ fn ai_move(
         tf.translation.x = x;
         tf.translation.z = z;
         tf.translation.y = 0.0;
-        let _ = snapshot;
     }
 }
 
