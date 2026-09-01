@@ -248,7 +248,7 @@ fn age_screen_juice(time: Res<Time<Real>>, paused: Res<Paused>, mut juice: ResMu
     }
     let dt = time.delta_secs();
     juice.flash = (juice.flash - dt * 3.2).max(0.0);
-    juice.hitstop = (juice.hitstop - dt * 8.0).max(0.0);
+    juice.hitstop = (juice.hitstop - dt * 1.15).max(0.0);
 }
 
 fn apply_hitstop(juice: Res<ScreenJuice>, paused: Res<Paused>, mut virt: ResMut<Time<Virtual>>) {

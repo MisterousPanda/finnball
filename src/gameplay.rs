@@ -409,15 +409,18 @@ fn apply_intents(
         }
         let stick = intent.move_xz;
         let dir = if let Ok(ctf) = cam.single() {
-            let fwd = {
-                let f = ctf.forward();
-                Vec3::new(f.x, 0.0, f.z).normalize_or_zero()
-            };
-            let right = {
-                let r = ctf.right();
-                Vec3::new(r.x, 0.0, r.z).normalize_or_zero()
-            };
-            // W is stick.y = -1 → camera forward
+            let mut fwd = Vec3::new(ctf.forward().x, 0.0, ctf.forward().z);
+            if fwd.length_squared() < 0.04 {
+                fwd = Vec3::new(0.0, 0.0, -1.0);
+            } else {
+                fwd = fwd.normalize();
+            }
+            let mut right = Vec3::new(ctf.right().x, 0.0, ctf.right().z);
+            if right.length_squared() < 0.04 {
+                right = Vec3::new(1.0, 0.0, 0.0);
+            } else {
+                right = right.normalize();
+            }
             right * stick.x + fwd * (-stick.y)
         } else {
             Vec3::new(stick.x, 0.0, stick.y)
@@ -502,6 +505,7 @@ fn follow_dribble(
 fn pickup_loose_ball(
     paused: Res<Paused>,
     mut ticker: ResMut<Ticker>,
+    mut last_pass: ResMut<LastPass>,
     mut clock: ResMut<MatchClock>,
     config: Res<MatchConfig>,
     mut ball: Query<(&Transform, &mut BallState, &BallVel), (With<Ball>, Without<Player>)>,
@@ -545,8 +549,12 @@ fn pickup_loose_ball(
             if let Ok((_, _, _, _, mut boxl)) = players.get_mut(e) {
                 boxl.reb += 1;
             }
+            last_pass.passer = None;
+            last_pass.age = 99.0;
             ticker.line = "REBOUND — THE ROCK IS OURS".into();
         } else {
+            last_pass.passer = None;
+            last_pass.age = 99.0;
             ticker.line = "POSSESSION CHANGE".into();
         }
         ticker.age = 0.0;
@@ -807,6 +815,7 @@ fn steal_attempts(
     mut ticker: ResMut<Ticker>,
     mut steals: MessageWriter<StealEvent>,
     mut cams: MessageWriter<crate::camera::CamTrigger>,
+    mut last_pass: ResMut<LastPass>,
     control: Res<LiveControl>,
     mut ball: Query<&mut BallState, With<Ball>>,
     mut players: Query<(Entity, &Player, &Ratings, &Transform, &mut Pose, &mut PoseClock, &mut BoxLine)>,
@@ -857,6 +866,8 @@ fn steal_attempts(
             pos: tp,
         });
         cams.write(crate::camera::CamTrigger::Steal);
+        last_pass.passer = None;
+        last_pass.age = 99.0;
         ticker.line = "STRIPPED — GHOST MODE".into();
         ticker.age = 0.0;
         if let Ok((_, _, _, _, mut pose, mut clock, mut boxl)) = players.get_mut(ctrl) {
@@ -948,8 +959,9 @@ fn handle_buckets(
                 } else if ev.is_three {
                     3
                 } else {
-                    points_for(shot_kind(tf.translation.x, tf.translation.z, hoop_x))
+                    2
                 };
+                let _ = (tf, hoop_x);
                 boxl.pts += pts;
                 boxl.fg_made += 1;
                 *pose = Pose::Celebrate;
@@ -958,8 +970,10 @@ fn handle_buckets(
             if last_pass.age < 3.2 {
                 if let Some(passer) = last_pass.passer {
                     if Some(passer) != ev.shooter {
-                        if let Ok((_, _, _, _, _, mut boxl)) = players.get_mut(passer) {
-                            boxl.ast += 1;
+                        if let Ok((_, p, _, _, _, mut boxl)) = players.get_mut(passer) {
+                            if p.side == side {
+                                boxl.ast += 1;
+                            }
                         }
                     }
                 }
