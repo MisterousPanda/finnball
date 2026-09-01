@@ -1,0 +1,9 @@
+/target
+/dist
+/.vercel
+**/*.rs.bk
+.DS_Store
+*.pdb
+.idea
+.vscode
+www/pkg
