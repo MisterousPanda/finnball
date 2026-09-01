@@ -459,7 +459,7 @@ pub fn spawn_player(
                 })
                 .id();
             spawn_jersey_number(root, &cuboid, &number_mat, jersey_number(id, slot));
-            let mut limb = |root: &mut RelatedSpawnerCommands<ChildOf>,
+            let limb = |root: &mut RelatedSpawnerCommands<ChildOf>,
                             pivot: Vec3,
                             mesh: &Handle<Mesh>,
                             mat: &Handle<StandardMaterial>,

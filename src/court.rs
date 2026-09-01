@@ -6,24 +6,21 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::arenas::{ArenaId, ArenaTheme};
-use crate::camera::CameraPostFx;
 use crate::courtpaint::{paint_court, PLANE_HALF_LEN, PLANE_HALF_WID};
+use crate::crowd::{Batch, CrowdExt, CrowdMaterial, CrowdSection, CrowdStyle, Lcg, Parts};
 use crate::sim::{COURT_HALF_LEN, COURT_HALF_WID, HOOP_X, RIM_HEIGHT, RIM_RADIUS};
 use crate::states::{AppState, MatchConfig};
 
 /// Texels per meter for the painted hardwood. 64 → 1997x1165 RGBA (~9 MB), fine for WebGL2.
 const COURT_PX_PER_M: u32 = 64;
 
-/// WebGL2 has no storage buffers, so every fan is close to one draw call. Thin the
-/// crowd there and skip the head spheres; native keeps the full house.
+/// The crowd is merged into one mesh per stand section, so seat density is only a
+/// vertex-count question. The web build trims the top tiers to keep the upload small.
 #[cfg(target_arch = "wasm32")]
-const FAN_SPACING: f32 = 0.92;
+const TIERS: usize = 7;
 #[cfg(not(target_arch = "wasm32"))]
-const FAN_SPACING: f32 = 0.62;
-#[cfg(target_arch = "wasm32")]
-const FAN_HEADS: bool = false;
-#[cfg(not(target_arch = "wasm32"))]
-const FAN_HEADS: bool = true;
+const TIERS: usize = 9;
+const SEAT_PITCH: f32 = 0.56;
 
 pub struct CourtPlugin;
 
@@ -49,8 +46,9 @@ impl Plugin for CourtPlugin {
             .add_systems(Update, spin_holo.run_if(in_state(AppState::Playing)))
             .add_systems(
                 Update,
-                (pulse_nets, animate_crowd).run_if(in_state(AppState::Playing)),
-            );
+                (pulse_nets, move_referee).run_if(in_state(AppState::Playing)),
+            )
+            .add_systems(Update, pulse_ribbons);
     }
 }
 
@@ -77,14 +75,18 @@ pub struct NetRipple {
 }
 
 #[derive(Component)]
-struct CrowdFan {
-    phase: f32,
-    base_y: f32,
-    speed: f32,
+struct RibbonBoard;
+
+#[derive(Component)]
+struct Referee {
+    clock: f32,
 }
 
+#[derive(Component)]
+struct RefLeg(f32);
+
 #[derive(Resource, Default)]
-struct CourtTextures {
+pub struct CourtTextures {
     by_arena: HashMap<ArenaId, Handle<Image>>,
 }
 
@@ -98,6 +100,7 @@ pub fn spawn_arena(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut crowd_mats: ResMut<Assets<CrowdMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut cache: ResMut<CourtTextures>,
     config: Res<MatchConfig>,
@@ -108,9 +111,9 @@ pub fn spawn_arena(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &mut crowd_mats,
         &theme,
         floor,
-        true,
     );
 }
 
@@ -118,6 +121,7 @@ fn spawn_menu_arena(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut crowd_mats: ResMut<Assets<CrowdMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut cache: ResMut<CourtTextures>,
     config: Res<MatchConfig>,
@@ -132,9 +136,9 @@ fn spawn_menu_arena(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &mut crowd_mats,
         &theme,
         floor,
-        true,
     );
 }
 
@@ -168,9 +172,9 @@ fn build_arena(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    crowd_mats: &mut Assets<CrowdMaterial>,
     theme: &ArenaTheme,
     floor_tex: Handle<Image>,
-    full_crowd: bool,
 ) {
     commands.insert_resource(GlobalAmbientLight {
         color: theme.ambient,
@@ -303,6 +307,7 @@ fn build_arena(
         ));
         commands.spawn((
             ArenaRoot,
+            RibbonBoard,
             Mesh3d(meshes.add(Cuboid::new(PLANE_HALF_LEN * 2.0 - 0.4, 0.34, 0.06))),
             MeshMaterial3d(ribbon_mat.clone()),
             Transform::from_xyz(0.0, ribbon_h * 0.55, z - s * 0.12),
@@ -336,10 +341,20 @@ fn build_arena(
         );
     }
 
-    // --- stands + crowd
-    if full_crowd {
-        spawn_stands(commands, meshes, materials, theme, &riser_mat, &wall_mat);
-    }
+    // --- stands + crowd + courtside
+    spawn_stands(
+        commands, meshes, materials, crowd_mats, theme, &riser_mat, &wall_mat,
+    );
+    spawn_courtside(
+        commands,
+        meshes,
+        materials,
+        crowd_mats,
+        theme,
+        &slab_mat,
+        &ribbon_mat,
+    );
+    spawn_referee(commands, meshes, materials);
 
     // --- center-hung jumbotron
     let cube_y = 12.5;
@@ -474,70 +489,55 @@ fn spawn_stands(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    crowd_mats: &mut Assets<CrowdMaterial>,
     theme: &ArenaTheme,
     riser_mat: &Handle<StandardMaterial>,
     wall_mat: &Handle<StandardMaterial>,
 ) {
-    let fan_mesh = meshes.add(Capsule3d::new(0.19, 0.46));
-    let head_mesh = meshes.add(Sphere::new(0.13));
-    let riser = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
-
-    let home = crate::roster::Side::Home.primary();
-    let away = crate::roster::Side::Away.primary();
-    let shirts: Vec<Handle<StandardMaterial>> = [
-        home,
-        home,
-        away,
-        Color::srgb(0.95, 0.95, 0.98),
-        Color::srgb(0.08, 0.08, 0.1),
-        Color::srgb(0.9, 0.3, 0.25),
-        Color::srgb(0.95, 0.8, 0.2),
+    let parts = Parts::new();
+    let style = CrowdStyle::arena(
+        crate::roster::Side::Home.primary(),
+        crate::roster::Side::Away.primary(),
         theme.accent,
-    ]
-    .into_iter()
-    .map(|c| {
-        materials.add(StandardMaterial {
-            base_color: c,
-            perceptual_roughness: 0.85,
+        theme.crowd,
+    );
+    let crowd_mat = crowd_mats.add(CrowdMaterial {
+        base: StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.9,
             ..default()
-        })
-    })
-    .collect();
-    let skins: Vec<Handle<StandardMaterial>> = [
-        Color::srgb(0.98, 0.85, 0.72),
-        Color::srgb(0.85, 0.62, 0.45),
-        Color::srgb(0.55, 0.36, 0.25),
-        Color::srgb(0.36, 0.22, 0.16),
-    ]
-    .into_iter()
-    .map(|c| {
-        materials.add(StandardMaterial {
-            base_color: c,
-            perceptual_roughness: 0.8,
-            ..default()
-        })
-    })
-    .collect();
+        },
+        extension: CrowdExt { params: Vec4::ZERO },
+    });
+    let riser = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let step_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.16, 0.17, 0.2),
+        perceptual_roughness: 0.95,
+        ..default()
+    });
+    let rail_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.75, 0.78, 0.82),
+        metallic: 0.8,
+        perceptual_roughness: 0.3,
+        ..default()
+    });
+    let mut rng = Lcg(0x5EED_1234);
 
-    let mut n: u32 = 17;
-    let mut rnd = move || {
-        n = n.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
-        (n >> 8) as f32 / 16_777_216.0
-    };
+    let tier_rise = 0.82;
+    let tier_depth = 1.25;
+    let first_y = 0.9;
+    let side_start = PLANE_HALF_WID + 1.4;
+    let end_start = PLANE_HALF_LEN + 1.9;
+    let aisle_every = 12;
 
-    let tiers = 7;
-    let tier_rise = 0.92;
-    let tier_depth = 1.35;
-    let first_y = 0.55;
-    let side_start = PLANE_HALF_WID + 1.1;
-    let end_start = PLANE_HALF_LEN + 1.6;
-
-    for tier in 0..tiers {
+    for tier in 0..TIERS {
         let y = first_y + tier as f32 * tier_rise;
         let off = tier as f32 * tier_depth;
-        // long sides
-        let side_len = (PLANE_HALF_LEN + 1.0 + off) * 2.0;
-        for s in [-1.0, 1.0] {
+        let side_len = (PLANE_HALF_LEN + 1.2 + off) * 2.0;
+        let end_len = (PLANE_HALF_WID + 0.6 + off) * 2.0;
+
+        for s in [-1.0f32, 1.0] {
+            // long side riser + step lip
             let z = s * (side_start + off);
             commands.spawn((
                 ArenaRoot,
@@ -549,28 +549,40 @@ fn spawn_stands(
                     ..default()
                 },
             ));
-            let mut x = -side_len * 0.5 + 0.4;
-            while x < side_len * 0.5 - 0.4 {
-                if rnd() > 0.08 {
-                    let jx = (rnd() - 0.5) * 0.12;
-                    let jz = (rnd() - 0.5) * 0.25;
-                    spawn_fan(
-                        commands,
-                        &fan_mesh,
-                        &head_mesh,
-                        &shirts,
-                        &skins,
-                        &mut rnd,
-                        Vec3::new(x + jx, y, z + jz),
-                        -s,
-                    );
+            commands.spawn((
+                ArenaRoot,
+                Mesh3d(riser.clone()),
+                MeshMaterial3d(step_mat.clone()),
+                Transform {
+                    translation: Vec3::new(0.0, y - 0.02, z - s * tier_depth * 0.5),
+                    scale: Vec3::new(side_len, 0.05, 0.12),
+                    ..default()
+                },
+            ));
+            let mut batch = Batch::default();
+            let n = (side_len / SEAT_PITCH) as usize;
+            for i in 0..n {
+                let x = -side_len * 0.5 + (i as f32 + 0.5) * SEAT_PITCH;
+                if i % aisle_every == aisle_every / 2 {
+                    continue;
                 }
-                x += FAN_SPACING;
+                let origin = Vec3::new(x, y, z + s * 0.1);
+                let yaw = if s > 0.0 { std::f32::consts::PI } else { 0.0 };
+                crate::crowd::seat(&mut batch, &parts, origin, yaw, &style);
+                let r = rng.next();
+                if r > 0.1 {
+                    crate::crowd::fan(&mut batch, &parts, &mut rng, origin, yaw, &style, r > 0.93);
+                }
             }
-        }
-        // ends
-        let end_len = (PLANE_HALF_WID + 0.4 + off) * 2.0;
-        for s in [-1.0, 1.0] {
+            commands.spawn((
+                ArenaRoot,
+                CrowdSection,
+                Mesh3d(meshes.add(batch.build())),
+                MeshMaterial3d(crowd_mat.clone()),
+                Transform::IDENTITY,
+            ));
+
+            // end riser
             let x = s * (end_start + off);
             commands.spawn((
                 ArenaRoot,
@@ -582,38 +594,78 @@ fn spawn_stands(
                     ..default()
                 },
             ));
-            let mut z = -end_len * 0.5 + 0.4;
-            while z < end_len * 0.5 - 0.4 {
-                if rnd() > 0.1 {
-                    let jx = (rnd() - 0.5) * 0.25;
-                    let jz = (rnd() - 0.5) * 0.12;
-                    spawn_fan(
-                        commands,
-                        &fan_mesh,
-                        &head_mesh,
-                        &shirts,
-                        &skins,
-                        &mut rnd,
-                        Vec3::new(x + jx, y, z + jz),
-                        0.0,
-                    );
+            let mut batch = Batch::default();
+            let n = (end_len / SEAT_PITCH) as usize;
+            for i in 0..n {
+                let zz = -end_len * 0.5 + (i as f32 + 0.5) * SEAT_PITCH;
+                if i % aisle_every == aisle_every / 2 {
+                    continue;
                 }
-                z += FAN_SPACING * 1.06;
+                let origin = Vec3::new(x + s * 0.1, y, zz);
+                let yaw = if s > 0.0 {
+                    -std::f32::consts::FRAC_PI_2
+                } else {
+                    std::f32::consts::FRAC_PI_2
+                };
+                crate::crowd::seat(&mut batch, &parts, origin, yaw, &style);
+                let r = rng.next();
+                if r > 0.12 {
+                    crate::crowd::fan(&mut batch, &parts, &mut rng, origin, yaw, &style, r > 0.94);
+                }
             }
+            commands.spawn((
+                ArenaRoot,
+                CrowdSection,
+                Mesh3d(meshes.add(batch.build())),
+                MeshMaterial3d(crowd_mat.clone()),
+                Transform::IDENTITY,
+            ));
         }
     }
 
-    // Back walls + upper deck fascia
-    let top_y = first_y + tiers as f32 * tier_rise;
-    let far = tiers as f32 * tier_depth;
-    for s in [-1.0, 1.0] {
+    // Front rail around the lower bowl
+    for s in [-1.0f32, 1.0] {
+        commands.spawn((
+            ArenaRoot,
+            Mesh3d(meshes.add(Cuboid::new((PLANE_HALF_LEN + 1.2) * 2.0, 0.04, 0.04))),
+            MeshMaterial3d(rail_mat.clone()),
+            Transform::from_xyz(0.0, first_y + 0.9, s * (side_start - tier_depth * 0.5)),
+        ));
+        commands.spawn((
+            ArenaRoot,
+            Mesh3d(meshes.add(Cuboid::new(0.04, 0.04, (PLANE_HALF_WID + 0.6) * 2.0))),
+            MeshMaterial3d(rail_mat.clone()),
+            Transform::from_xyz(s * (end_start - tier_depth * 0.5), first_y + 0.9, 0.0),
+        ));
+    }
+
+    // Back walls, upper fascia and hanging banners
+    let top_y = first_y + TIERS as f32 * tier_rise;
+    let far = TIERS as f32 * tier_depth;
+    let banner_home = materials.add(StandardMaterial {
+        base_color: crate::roster::Side::Home.primary(),
+        emissive: LinearRgba::from(crate::roster::Side::Home.primary().to_linear()) * 0.25,
+        ..default()
+    });
+    let banner_away = materials.add(StandardMaterial {
+        base_color: crate::roster::Side::Away.primary(),
+        emissive: LinearRgba::from(crate::roster::Side::Away.primary().to_linear()) * 0.25,
+        ..default()
+    });
+    let banner_trim = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.95, 0.9, 0.75),
+        emissive: LinearRgba::new(0.6, 0.55, 0.35, 1.0),
+        ..default()
+    });
+    for s in [-1.0f32, 1.0] {
+        let wall_z = s * (side_start + far + 0.8);
         commands.spawn((
             ArenaRoot,
             Mesh3d(riser.clone()),
             MeshMaterial3d(wall_mat.clone()),
             Transform {
-                translation: Vec3::new(0.0, top_y + 5.0, s * (side_start + far + 0.8)),
-                scale: Vec3::new((PLANE_HALF_LEN + far + 4.0) * 2.0, 12.0, 0.6),
+                translation: Vec3::new(0.0, top_y + 6.0, wall_z),
+                scale: Vec3::new((PLANE_HALF_LEN + far + 4.0) * 2.0, 14.0, 0.6),
                 ..default()
             },
         ));
@@ -622,61 +674,307 @@ fn spawn_stands(
             Mesh3d(riser.clone()),
             MeshMaterial3d(wall_mat.clone()),
             Transform {
-                translation: Vec3::new(s * (end_start + far + 0.8), top_y + 5.0, 0.0),
-                scale: Vec3::new(0.6, 12.0, (PLANE_HALF_WID + far + 4.0) * 2.0),
+                translation: Vec3::new(s * (end_start + far + 0.8), top_y + 6.0, 0.0),
+                scale: Vec3::new(0.6, 14.0, (PLANE_HALF_WID + far + 4.0) * 2.0),
                 ..default()
             },
+        ));
+        // Championship banners along the long walls
+        for i in 0..9 {
+            let x = (i as f32 - 4.0) * 3.4;
+            let mat = if i % 2 == 0 {
+                &banner_home
+            } else {
+                &banner_away
+            };
+            let bz = wall_z - s * 0.5;
+            commands.spawn((
+                ArenaRoot,
+                Mesh3d(meshes.add(Cuboid::new(1.7, 2.8, 0.06))),
+                MeshMaterial3d(mat.clone()),
+                Transform::from_xyz(x, top_y + 4.2, bz),
+            ));
+            commands.spawn((
+                ArenaRoot,
+                Mesh3d(meshes.add(Cuboid::new(1.8, 0.16, 0.1))),
+                MeshMaterial3d(banner_trim.clone()),
+                Transform::from_xyz(x, top_y + 5.65, bz),
+            ));
+            commands.spawn((
+                ArenaRoot,
+                Mesh3d(meshes.add(Cuboid::new(1.2, 0.3, 0.08))),
+                MeshMaterial3d(banner_trim.clone()),
+                Transform::from_xyz(x, top_y + 4.0, bz),
+            ));
+        }
+    }
+}
+
+fn spawn_courtside(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    crowd_mats: &mut Assets<CrowdMaterial>,
+    theme: &ArenaTheme,
+    slab_mat: &Handle<StandardMaterial>,
+    ribbon_mat: &Handle<StandardMaterial>,
+) {
+    let parts = Parts::new();
+    let mut rng = Lcg(0xC0A5_71DE);
+    let home = crate::roster::Side::Home;
+    let away = crate::roster::Side::Away;
+    let crowd_mat = crowd_mats.add(CrowdMaterial {
+        base: StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 0.85,
+            ..default()
+        },
+        extension: CrowdExt { params: Vec4::ZERO },
+    });
+    let floor_seat_z = PLANE_HALF_WID - 0.55;
+
+    // Scorer's table with LED front
+    commands.spawn((
+        ArenaRoot,
+        Mesh3d(meshes.add(Cuboid::new(7.6, 0.78, 0.7))),
+        MeshMaterial3d(slab_mat.clone()),
+        Transform::from_xyz(0.0, 0.39, floor_seat_z + 0.25),
+    ));
+    commands.spawn((
+        ArenaRoot,
+        RibbonBoard,
+        Mesh3d(meshes.add(Cuboid::new(7.4, 0.5, 0.05))),
+        MeshMaterial3d(ribbon_mat.clone()),
+        Transform::from_xyz(0.0, 0.42, floor_seat_z - 0.12),
+    ));
+    // Officials behind the table
+    let officials = CrowdStyle {
+        shirts: vec![[0.05, 0.05, 0.06], [0.9, 0.9, 0.92]],
+        ..CrowdStyle::arena(home.primary(), away.primary(), theme.accent, theme.crowd)
+    };
+    let mut batch = Batch::default();
+    for i in 0..6 {
+        let x = (i as f32 - 2.5) * 1.15;
+        let o = Vec3::new(x, 0.0, floor_seat_z + 0.95);
+        crate::crowd::seat(&mut batch, &parts, o, std::f32::consts::PI, &officials);
+        crate::crowd::fan(
+            &mut batch,
+            &parts,
+            &mut rng,
+            o,
+            std::f32::consts::PI,
+            &officials,
+            false,
+        );
+    }
+
+    // Team benches: reserves in full uniform
+    let bench_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.1, 0.1, 0.13),
+        perceptual_roughness: 0.7,
+        ..default()
+    });
+    for (sx, side) in [(-1.0f32, home), (1.0, away)] {
+        let jersey = side.primary();
+        let team = CrowdStyle {
+            shirts: vec![
+                crate::crowd::lin(jersey),
+                crate::crowd::lin(jersey),
+                crate::crowd::lin(side.secondary()),
+            ],
+            pants: vec![crate::crowd::lin(side.secondary())],
+            ..CrowdStyle::arena(home.primary(), away.primary(), theme.accent, theme.crowd)
+        };
+        commands.spawn((
+            ArenaRoot,
+            Mesh3d(meshes.add(Cuboid::new(5.2, 0.08, 0.5))),
+            MeshMaterial3d(bench_mat.clone()),
+            Transform::from_xyz(sx * 7.4, 0.44, floor_seat_z + 0.5),
+        ));
+        for i in 0..7 {
+            let x = sx * (5.0 + i as f32 * 0.8);
+            let o = Vec3::new(x, 0.0, floor_seat_z + 0.5);
+            crate::crowd::fan(
+                &mut batch,
+                &parts,
+                &mut rng,
+                o,
+                std::f32::consts::PI,
+                &team,
+                i == 6,
+            );
+        }
+    }
+
+    // Courtside celebrity row: far sideline, plus the corners on the near side
+    let vip = CrowdStyle::arena(
+        home.primary(),
+        away.primary(),
+        theme.accent,
+        Color::srgb(0.1, 0.1, 0.12),
+    );
+    let mut x = -PLANE_HALF_LEN + 1.6;
+    while x < PLANE_HALF_LEN - 1.6 {
+        let o = Vec3::new(x, 0.0, -floor_seat_z);
+        crate::crowd::seat(&mut batch, &parts, o, 0.0, &vip);
+        if rng.next() > 0.08 {
+            crate::crowd::fan(&mut batch, &parts, &mut rng, o, 0.0, &vip, false);
+        }
+        x += 0.68;
+    }
+    for sx in [-1.0f32, 1.0] {
+        let mut x = 11.2;
+        while x < PLANE_HALF_LEN - 1.4 {
+            let o = Vec3::new(sx * x, 0.0, floor_seat_z);
+            crate::crowd::seat(&mut batch, &parts, o, std::f32::consts::PI, &vip);
+            if rng.next() > 0.1 {
+                crate::crowd::fan(
+                    &mut batch,
+                    &parts,
+                    &mut rng,
+                    o,
+                    std::f32::consts::PI,
+                    &vip,
+                    false,
+                );
+            }
+            x += 0.68;
+        }
+    }
+    // Baseline photographers sitting on the floor
+    let press = CrowdStyle {
+        shirts: vec![[0.04, 0.04, 0.05], [0.12, 0.12, 0.14], [0.3, 0.3, 0.33]],
+        ..CrowdStyle::arena(home.primary(), away.primary(), theme.accent, theme.crowd)
+    };
+    for sx in [-1.0f32, 1.0] {
+        for i in 0..8 {
+            let z = (i as f32 - 3.5) * 1.3 + if i >= 4 { 1.2 } else { -1.2 };
+            let o = Vec3::new(sx * (PLANE_HALF_LEN - 0.55), -0.36, z);
+            let yaw = if sx > 0.0 {
+                -std::f32::consts::FRAC_PI_2
+            } else {
+                std::f32::consts::FRAC_PI_2
+            };
+            crate::crowd::fan(&mut batch, &parts, &mut rng, o, yaw, &press, false);
+        }
+    }
+    commands.spawn((
+        ArenaRoot,
+        CrowdSection,
+        Mesh3d(meshes.add(batch.build())),
+        MeshMaterial3d(crowd_mat),
+        Transform::IDENTITY,
+    ));
+
+    // Broadcast cameras on tripods at the corners
+    let cam_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.08, 0.08, 0.09),
+        metallic: 0.5,
+        perceptual_roughness: 0.4,
+        ..default()
+    });
+    for (sx, sz) in [(-1.0f32, 1.0f32), (1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)] {
+        let base = Vec3::new(
+            sx * (COURT_HALF_LEN + 1.0),
+            0.0,
+            sz * (COURT_HALF_WID + 1.0),
+        );
+        commands.spawn((
+            ArenaRoot,
+            Mesh3d(meshes.add(Cylinder::new(0.03, 1.3))),
+            MeshMaterial3d(cam_mat.clone()),
+            Transform::from_translation(base + Vec3::Y * 0.65),
+        ));
+        commands.spawn((
+            ArenaRoot,
+            Mesh3d(meshes.add(Cuboid::new(0.5, 0.28, 0.3))),
+            MeshMaterial3d(cam_mat.clone()),
+            Transform::from_translation(base + Vec3::Y * 1.42)
+                .looking_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y),
         ));
     }
 }
 
-fn spawn_fan(
+fn spawn_referee(
     commands: &mut Commands,
-    body: &Handle<Mesh>,
-    head: &Handle<Mesh>,
-    shirts: &[Handle<StandardMaterial>],
-    skins: &[Handle<StandardMaterial>],
-    rnd: &mut impl FnMut() -> f32,
-    pos: Vec3,
-    face_z: f32,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
 ) {
-    let shirt = shirts[(rnd() * shirts.len() as f32) as usize % shirts.len()].clone();
-    let skin = skins[(rnd() * skins.len() as f32) as usize % skins.len()].clone();
-    let h = 0.9 + rnd() * 0.25;
-    let yaw = if face_z.abs() > 0.5 {
-        if face_z > 0.0 {
-            0.0
-        } else {
-            std::f32::consts::PI
-        }
-    } else if pos.x > 0.0 {
-        -std::f32::consts::FRAC_PI_2
-    } else {
-        std::f32::consts::FRAC_PI_2
-    };
+    let black = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.06, 0.06, 0.07),
+        perceptual_roughness: 0.8,
+        ..default()
+    });
+    let white = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.95, 0.95, 0.95),
+        perceptual_roughness: 0.8,
+        ..default()
+    });
+    let skin = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.85, 0.65, 0.5),
+        perceptual_roughness: 0.75,
+        ..default()
+    });
+    let grey = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.45, 0.45, 0.48),
+        perceptual_roughness: 0.8,
+        ..default()
+    });
+    let cuboid = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let sphere = meshes.add(Sphere::new(1.0));
+    let leg = meshes.add(Capsule3d::new(0.08, 0.5));
+    let arm = meshes.add(Capsule3d::new(0.06, 0.42));
+
     commands
         .spawn((
             ArenaRoot,
-            CrowdFan {
-                phase: rnd() * std::f32::consts::TAU,
-                base_y: pos.y,
-                speed: 1.6 + rnd() * 1.4,
-            },
-            Mesh3d(body.clone()),
-            MeshMaterial3d(shirt),
-            Transform {
-                translation: Vec3::new(pos.x, pos.y + 0.42 * h, pos.z),
-                rotation: Quat::from_rotation_y(yaw),
-                scale: Vec3::new(1.0, h, 1.0),
-            },
+            Referee { clock: 0.0 },
+            Transform::from_xyz(0.0, 0.0, COURT_HALF_WID + 0.6),
             Visibility::default(),
         ))
-        .with_children(|p| {
-            if FAN_HEADS {
-                p.spawn((
-                    Mesh3d(head.clone()),
-                    MeshMaterial3d(skin),
-                    Transform::from_xyz(0.0, 0.46 / h + 0.16, 0.0),
+        .with_children(|r| {
+            // striped shirt
+            for i in 0..6 {
+                let mat = if i % 2 == 0 { &black } else { &white };
+                r.spawn((
+                    Mesh3d(cuboid.clone()),
+                    MeshMaterial3d(mat.clone()),
+                    Transform {
+                        translation: Vec3::new((i as f32 - 2.5) * 0.085, 1.2, 0.0),
+                        scale: Vec3::new(0.085, 0.6, 0.3),
+                        ..default()
+                    },
+                ));
+            }
+            r.spawn((
+                Mesh3d(cuboid.clone()),
+                MeshMaterial3d(grey.clone()),
+                Transform {
+                    translation: Vec3::new(0.0, 0.8, 0.0),
+                    scale: Vec3::new(0.48, 0.28, 0.3),
+                    ..default()
+                },
+            ));
+            r.spawn((
+                Mesh3d(sphere.clone()),
+                MeshMaterial3d(skin.clone()),
+                Transform {
+                    translation: Vec3::new(0.0, 1.7, 0.0),
+                    scale: Vec3::splat(0.19),
+                    ..default()
+                },
+            ));
+            for sx in [-1.0f32, 1.0] {
+                r.spawn((
+                    RefLeg(sx),
+                    Mesh3d(leg.clone()),
+                    MeshMaterial3d(black.clone()),
+                    Transform::from_xyz(sx * 0.14, 0.4, 0.0),
+                ));
+                r.spawn((
+                    Mesh3d(arm.clone()),
+                    MeshMaterial3d(skin.clone()),
+                    Transform::from_xyz(sx * 0.32, 1.15, 0.0),
                 ));
             }
         });
@@ -797,19 +1095,89 @@ fn pulse_nets(
     }
 }
 
-fn animate_crowd(
+fn move_referee(
     time: Res<Time>,
-    fx: Res<CameraPostFx>,
-    mut q: Query<(&CrowdFan, &mut Transform)>,
+    ball: Query<&Transform, (With<crate::ball::Ball>, Without<Referee>)>,
+    mut refs: Query<(&mut Transform, &mut Referee, &Children)>,
+    mut legs: Query<(&RefLeg, &mut Transform), (Without<Referee>, Without<crate::ball::Ball>)>,
 ) {
-    let t = time.elapsed_secs();
-    let hype = fx.crowd_flash.clamp(0.0, 1.0);
-    for (fan, mut tf) in &mut q {
-        let idle = ((t * fan.speed + fan.phase).sin() * 0.5 + 0.5) * 0.04;
-        let jump = ((t * 9.0 + fan.phase).sin().max(0.0)) * 0.42 * hype;
-        let h = tf.scale.y;
-        tf.translation.y = fan.base_y + 0.42 * h + idle + jump;
+    let Ok(btf) = ball.single() else {
+        return;
+    };
+    let dt = time.delta_secs();
+    for (mut tf, mut r, children) in &mut refs {
+        let target_x = (btf.translation.x * 0.8).clamp(-11.5, 11.5);
+        let dx = target_x - tf.translation.x;
+        let step = dx.clamp(-4.5 * dt, 4.5 * dt);
+        tf.translation.x += step;
+        let moving = step.abs() > 0.002;
+        if moving {
+            r.clock += dt * 9.0;
+        }
+        let face = if dx.abs() > 0.3 {
+            Quat::from_rotation_y(if dx > 0.0 {
+                std::f32::consts::FRAC_PI_2
+            } else {
+                -std::f32::consts::FRAC_PI_2
+            })
+        } else {
+            Quat::from_rotation_y(std::f32::consts::PI)
+        };
+        tf.rotation = tf.rotation.slerp(face, 1.0 - (-8.0 * dt).exp());
+        for child in children.iter() {
+            if let Ok((leg, mut ltf)) = legs.get_mut(child) {
+                let swing = if moving {
+                    (r.clock
+                        + if leg.0 > 0.0 {
+                            std::f32::consts::PI
+                        } else {
+                            0.0
+                        })
+                    .sin()
+                        * 0.5
+                } else {
+                    0.0
+                };
+                ltf.rotation = Quat::from_rotation_x(swing);
+            }
+        }
     }
+}
+
+fn pulse_ribbons(
+    time: Res<Time>,
+    config: Res<MatchConfig>,
+    boards: Query<&MeshMaterial3d<StandardMaterial>, With<RibbonBoard>>,
+    mut mats: ResMut<Assets<StandardMaterial>>,
+) {
+    let Some(handle) = boards.iter().next() else {
+        return;
+    };
+    let Some(mat) = mats.get_mut(&handle.0) else {
+        return;
+    };
+    let t = time.elapsed_secs();
+    let accent = LinearRgba::from(config.arena.theme().accent.to_linear());
+    let home = LinearRgba::from(crate::roster::Side::Home.primary().to_linear());
+    let away = LinearRgba::from(crate::roster::Side::Away.primary().to_linear());
+    // Cycle accent → home → away every few seconds, with a soft shimmer on top.
+    let cycle = (t * 0.25).fract() * 3.0;
+    let (a, b, k) = if cycle < 1.0 {
+        (accent, home, cycle)
+    } else if cycle < 2.0 {
+        (home, away, cycle - 1.0)
+    } else {
+        (away, accent, cycle - 2.0)
+    };
+    let k = (k * std::f32::consts::PI).sin().powi(4);
+    let mix = LinearRgba::new(
+        a.red + (b.red - a.red) * k,
+        a.green + (b.green - a.green) * k,
+        a.blue + (b.blue - a.blue) * k,
+        1.0,
+    );
+    let shimmer = 1.4 + (t * 6.0).sin() * 0.2;
+    mat.emissive = mix * shimmer;
 }
 
 pub const _COURT_EXTENT: (f32, f32) = (COURT_HALF_LEN, COURT_HALF_WID);

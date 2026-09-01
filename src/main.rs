@@ -5,6 +5,7 @@ mod ball;
 mod camera;
 mod court;
 mod courtpaint;
+mod crowd;
 mod fx;
 mod gameplay;
 mod input;
@@ -52,6 +53,7 @@ fn main() {
         .add_plugins((
             camera::CameraPlugin,
             court::CourtPlugin,
+            crowd::CrowdPlugin,
             units::UnitsPlugin,
             ball::BallPlugin,
             gameplay::GameplayPlugin,
