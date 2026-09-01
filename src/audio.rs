@@ -2,7 +2,7 @@ use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, PlaybackSettings, V
 use bevy::prelude::*;
 
 use crate::ball::{BackboardHitEvent, BucketEvent, FloorBounceEvent, RimHitEvent};
-use crate::gameplay::{DribbleTickEvent, StealEvent, ViolationEvent};
+use crate::gameplay::{DribbleTickEvent, StealEvent, TipWhistle, ViolationEvent};
 use crate::states::{AppState, Paused};
 
 pub struct FinnAudioPlugin;
@@ -22,6 +22,7 @@ impl Plugin for FinnAudioPlugin {
                     play_collisions,
                     play_dribble,
                     play_game_events,
+                    play_tip_whistle,
                     play_ui_clicks,
                     duck_and_mix,
                 )
@@ -123,6 +124,11 @@ fn unlock_on_input(
     mut gate: ResMut<AudioGate>,
 ) {
     if gate.unlocked {
+        return;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        gate.unlocked = true;
         return;
     }
     if keys.get_just_pressed().next().is_some() || mouse.get_just_pressed().next().is_some() {
@@ -295,6 +301,20 @@ fn play_game_events(
         mix.duck_target = 0.2;
         mix.duck_hold = 0.8;
         play_one(&mut commands, sounds.buzzer.clone(), mix.sfx);
+    }
+}
+
+fn play_tip_whistle(
+    mut commands: Commands,
+    sounds: Option<Res<Sounds>>,
+    mix: Res<AudioMix>,
+    mut tips: MessageReader<TipWhistle>,
+) {
+    let Some(sounds) = sounds else {
+        return;
+    };
+    for _ in tips.read() {
+        play_one(&mut commands, sounds.whistle.clone(), mix.sfx * 0.8);
     }
 }
 

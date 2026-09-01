@@ -206,9 +206,6 @@ fn emit_cam_triggers(
             Pose::Block => {
                 triggers.write(CamTrigger::Block);
             }
-            Pose::Stumble => {
-                triggers.write(CamTrigger::Steal);
-            }
             _ => {}
         }
     }
@@ -392,15 +389,6 @@ fn follow_game_cam(
                 HOLD_BLOCK,
                 0.3,
                 0.04,
-            );
-        } else if stumble_actor.is_some() {
-            cut_to(
-                &mut director,
-                &mut fx,
-                CameraShot::StealPunch,
-                HOLD_STEAL,
-                0.28,
-                0.08,
             );
         } else if let Some(st) = ball_state {
             pick_live_base(

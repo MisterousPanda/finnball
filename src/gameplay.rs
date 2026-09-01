@@ -27,6 +27,7 @@ impl Plugin for GameplayPlugin {
             .add_message::<DribbleTickEvent>()
             .add_message::<StealEvent>()
             .add_message::<ViolationEvent>()
+            .add_message::<TipWhistle>()
             .add_systems(OnEnter(AppState::Playing), start_match)
             .add_systems(
                 Update,
@@ -34,6 +35,8 @@ impl Plugin for GameplayPlugin {
                     tick_clock,
                     follow_dribble,
                     handle_buckets,
+                    inbound_after_score,
+                    tick_meter_freeze,
                     pose_timeouts,
                     maybe_end_game,
                 )
@@ -84,6 +87,7 @@ pub struct ShotMeter {
     pub armed: bool,
     pub value: f32,
     pub rising: bool,
+    pub freeze: f32,
 }
 
 #[derive(Resource, Default)]
@@ -150,6 +154,9 @@ pub struct StealEvent {
 #[derive(Message, Clone, Copy)]
 pub struct ViolationEvent;
 
+#[derive(Message, Clone, Copy)]
+pub struct TipWhistle;
+
 #[derive(Resource, Default)]
 pub struct LastPass {
     pub passer: Option<Entity>,
@@ -172,6 +179,7 @@ fn start_match(
     mut ticker: ResMut<Ticker>,
     mut paused: ResMut<Paused>,
     mut meter: ResMut<ShotMeter>,
+    mut whistle: MessageWriter<TipWhistle>,
 ) {
     paused.0 = false;
     meter.armed = false;
@@ -185,9 +193,10 @@ fn start_match(
     };
     clock.shot = config.shot_clock;
     clock.running = true;
-    ticker.line = "TIP-OFF — FINNBALL LIVE".into();
+    ticker.line = "TIP-OFF — HOME HAS THE ROCK".into();
     ticker.age = 0.0;
     commands.insert_resource(LastPass::default());
+    whistle.write(TipWhistle);
 
     let home_spots = [
         Vec3::new(-3.5, 0.0, 0.0),
@@ -234,12 +243,24 @@ fn start_match(
         }
     }
     control.entity = first_human;
-    spawn_ball(
+    let ball = spawn_ball(
         &mut commands,
         &mut meshes,
         &mut materials,
-        Vec3::new(0.0, 3.4, 0.0),
+        Vec3::new(-3.1, 1.1, 0.0),
     );
+    if let Some(holder) = first_human {
+        commands.entity(ball).insert(crate::ball::BallState {
+            hold: Hold::Held,
+            holder: Some(holder),
+            shooter: None,
+            last_touch: Some(holder),
+            last_passer: None,
+            dribble_phase: 0.0,
+            rim_hits: 0,
+            release_was_three: false,
+        });
+    }
     commands.insert_resource(PlayerIntent::default());
 }
 
@@ -254,7 +275,7 @@ fn tick_clock(
     mut next: ResMut<NextState<AppState>>,
     mut score: ResMut<Scoreboard>,
     mut ball: Query<(&mut Transform, &mut BallVel, &mut BallState), (With<Ball>, Without<Player>)>,
-    mut players: Query<&mut Transform, (With<Player>, Without<Ball>)>,
+    mut players: Query<(Entity, &Player, &mut Transform), Without<Ball>>,
 ) {
     ticker.age += time.delta_secs();
     last_pass.age += time.delta_secs();
@@ -271,7 +292,13 @@ fn tick_clock(
         ticker.line = "SHOT CLOCK VIOLATION".into();
         ticker.age = 0.0;
         viol.write(ViolationEvent);
-        reset_to_half(&mut ball, &mut players, false);
+        let give_home = ball
+            .single()
+            .ok()
+            .and_then(|(_, _, st)| st.last_touch)
+            .and_then(|e| players.get(e).ok().map(|(_, p, _)| p.side != Side::Home))
+            .unwrap_or(true);
+        reset_to_half(&mut ball, &mut players, give_home);
     }
     if clock.remaining <= 0.0 {
         if clock.quarter >= 4 {
@@ -297,15 +324,45 @@ fn tick_clock(
 
 fn reset_to_half(
     ball: &mut Query<(&mut Transform, &mut BallVel, &mut BallState), (With<Ball>, Without<Player>)>,
-    _players: &mut Query<&mut Transform, (With<Player>, Without<Ball>)>,
-    _positions: bool,
+    players: &mut Query<(Entity, &Player, &mut Transform), Without<Ball>>,
+    give_home: bool,
 ) {
+    let mut home_holder = None;
+    let mut away_holder = None;
+    for (e, p, mut tf) in players.iter_mut() {
+        let spots = if p.side == Side::Home {
+            [
+                Vec3::new(-3.5, 0.0, 0.0),
+                Vec3::new(-5.5, 0.0, 3.2),
+                Vec3::new(-5.5, 0.0, -3.2),
+            ]
+        } else {
+            [
+                Vec3::new(3.5, 0.0, 0.0),
+                Vec3::new(5.5, 0.0, 3.2),
+                Vec3::new(5.5, 0.0, -3.2),
+            ]
+        };
+        tf.translation = spots[p.slot.min(2) as usize];
+        if p.slot == 0 && p.side == Side::Home {
+            home_holder = Some(e);
+        }
+        if p.slot == 0 && p.side == Side::Away {
+            away_holder = Some(e);
+        }
+    }
+    let holder = if give_home { home_holder } else { away_holder };
     if let Ok((mut tf, mut vel, mut st)) = ball.single_mut() {
-        tf.translation = Vec3::new(0.0, 2.8, 0.0);
-        vel.0 = Vec3::new(0.0, 0.4, 0.0);
-        st.hold = Hold::Loose;
-        st.holder = None;
+        tf.translation = if give_home {
+            Vec3::new(-3.1, 1.1, 0.0)
+        } else {
+            Vec3::new(3.1, 1.1, 0.0)
+        };
+        vel.0 = Vec3::ZERO;
+        st.hold = if holder.is_some() { Hold::Held } else { Hold::Loose };
+        st.holder = holder;
         st.shooter = None;
+        st.last_touch = holder;
         st.last_passer = None;
         st.rim_hits = 0;
         st.release_was_three = false;
@@ -602,8 +659,8 @@ fn shoot_and_pass(
         let lateral = me_vel.cross(to_hoop).y.abs() > 2.0;
         let speed = me_vel.length();
         let meter_err = meter_accuracy(meter.value);
-        meter.armed = false;
-        meter.value = 0.0;
+        meter.armed = true;
+        meter.freeze = 0.45;
         meter.rising = true;
 
         let contest = nearest_contest(&roster, me_e, me_side, me_pos);
@@ -733,6 +790,7 @@ fn steal_attempts(
     mut rng: ResMut<GameRng>,
     mut ticker: ResMut<Ticker>,
     mut steals: MessageWriter<StealEvent>,
+    mut cams: MessageWriter<crate::camera::CamTrigger>,
     control: Res<LiveControl>,
     mut ball: Query<&mut BallState, With<Ball>>,
     mut players: Query<(Entity, &Player, &Ratings, &Transform, &mut Pose, &mut PoseClock, &mut BoxLine)>,
@@ -782,6 +840,7 @@ fn steal_attempts(
             success: true,
             pos: tp,
         });
+        cams.write(crate::camera::CamTrigger::Steal);
         ticker.line = "STRIPPED — GHOST MODE".into();
         ticker.age = 0.0;
         if let Ok((_, _, _, _, mut pose, mut clock, mut boxl)) = players.get_mut(ctrl) {
@@ -918,6 +977,80 @@ fn handle_buckets(
         clock.shot = config.shot_clock;
         if config.mode != GameMode::Practice && clock.quarter > 4 && score.home != score.away {
             next.set(AppState::GameOver);
+        }
+    }
+}
+
+fn inbound_after_score(
+    mut buckets: MessageReader<BucketEvent>,
+    mut ticker: ResMut<Ticker>,
+    mut last_pass: ResMut<LastPass>,
+    mut ball: Query<(&mut Transform, &mut BallVel, &mut BallState), (With<Ball>, Without<Player>)>,
+    mut players: Query<(Entity, &Player, &mut Transform), Without<Ball>>,
+) {
+    for ev in buckets.read() {
+        let scoring = if let Some(shooter) = ev.shooter {
+            players
+                .get(shooter)
+                .ok()
+                .map(|(_, p, _)| p.side)
+                .unwrap_or(if ev.hoop_home { Side::Away } else { Side::Home })
+        } else if ev.hoop_home {
+            Side::Away
+        } else {
+            Side::Home
+        };
+        let inbound_side = if scoring == Side::Home {
+            Side::Away
+        } else {
+            Side::Home
+        };
+        let mut inbounder = None;
+        for (e, p, mut tf) in &mut players {
+            if p.side == inbound_side {
+                let baseline = if inbound_side == Side::Away { 12.4 } else { -12.4 };
+                let z = (p.slot as f32 - 1.0) * 2.4;
+                tf.translation = Vec3::new(baseline, 0.0, z);
+                if p.slot == 0 {
+                    inbounder = Some(e);
+                }
+            } else {
+                let mid = if p.side == Side::Home { -4.0 } else { 4.0 };
+                tf.translation = Vec3::new(mid, 0.0, (p.slot as f32 - 1.0) * 3.0);
+            }
+        }
+        if let Ok((mut tf, mut vel, mut st)) = ball.single_mut() {
+            let x = if inbound_side == Side::Away { 12.1 } else { -12.1 };
+            tf.translation = Vec3::new(x, 1.1, 0.0);
+            vel.0 = Vec3::ZERO;
+            st.hold = if inbounder.is_some() {
+                Hold::Held
+            } else {
+                Hold::Loose
+            };
+            st.holder = inbounder;
+            st.shooter = None;
+            st.last_touch = inbounder;
+            st.last_passer = None;
+            st.rim_hits = 0;
+            st.release_was_three = false;
+        }
+        last_pass.passer = None;
+        last_pass.age = 99.0;
+        ticker.line = if inbound_side == Side::Away {
+            "INBOUND — CRANES HAVE IT".into()
+        } else {
+            "INBOUND — FOXES HAVE IT".into()
+        };
+        ticker.age = 0.0;
+    }
+}
+
+fn tick_meter_freeze(time: Res<Time>, mut meter: ResMut<ShotMeter>) {
+    if meter.freeze > 0.0 {
+        meter.freeze = (meter.freeze - time.delta_secs()).max(0.0);
+        if meter.freeze <= 0.0 {
+            meter.armed = false;
         }
     }
 }

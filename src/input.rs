@@ -42,23 +42,21 @@ fn read_input(
     intent.sprint = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
     intent.shoot_held = keys.pressed(KeyCode::Space);
     intent.shoot_released |= keys.just_released(KeyCode::Space);
-    if keys.just_released(KeyCode::Space) {
-        meter.armed = false;
-    }
     intent.pass |= keys.just_pressed(KeyCode::KeyE);
     intent.steal |= keys.just_pressed(KeyCode::KeyQ);
     intent.special |= keys.just_pressed(KeyCode::KeyF);
     intent.block |= keys.just_pressed(KeyCode::KeyR);
     intent.switch |= keys.just_pressed(KeyCode::Tab) || keys.just_pressed(KeyCode::KeyC);
-    intent.pass_kind = if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
+    intent.pass_kind = if keys.pressed(KeyCode::KeyT) {
         crate::sim::PassKind::Lob
-    } else if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
+    } else if keys.pressed(KeyCode::KeyG) {
         crate::sim::PassKind::Bounce
-    } else if intent.sprint {
+    } else if intent.sprint && keys.pressed(KeyCode::KeyE) {
         crate::sim::PassKind::Skip
     } else {
         crate::sim::PassKind::Chest
     };
+    let _ = meter;
 }
 
 fn switch_player(

@@ -157,18 +157,30 @@ fn setup_hud(mut commands: Commands) {
                                     ..default()
                                 },
                                 BorderColor::all(CYAN.with_alpha(0.4)),
-                                children![(
-                                    MeterFill,
-                                    Node {
-                                        width: percent(0),
-                                        height: percent(100),
-                                        ..default()
-                                    },
-                                    BackgroundColor(GOLD),
-                                )],
+                                children![
+                                    (
+                                        MeterFill,
+                                        Node {
+                                            width: percent(0),
+                                            height: percent(100),
+                                            ..default()
+                                        },
+                                        BackgroundColor(GOLD),
+                                    ),
+                                    (
+                                        Node {
+                                            position_type: PositionType::Absolute,
+                                            left: percent(70.0),
+                                            width: px(2),
+                                            height: percent(100),
+                                            ..default()
+                                        },
+                                        BackgroundColor(CYAN),
+                                    ),
+                                ],
                             ),
                             (
-                                Text::new("SPACE shot  •  E pass (W lob / S bounce)  •  Q steal  •  F dunk  •  R block"),
+                                Text::new("SPACE shot (gold=green)  •  E pass  •  T lob  •  G bounce  •  Q steal  •  F dunk  •  R block"),
                                 title_font(12.0),
                                 TextColor(MUTED),
                             ),
@@ -237,7 +249,11 @@ fn refresh_hud(
         }
     }
     for mut n in &mut fill {
-        let pct = if meter.armed { meter.value } else { 0.0 };
+        let pct = if meter.armed || meter.freeze > 0.0 {
+            meter.value
+        } else {
+            0.0
+        };
         n.width = percent(pct * 100.0);
     }
 }

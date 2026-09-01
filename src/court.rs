@@ -9,6 +9,7 @@ pub struct CourtPlugin;
 impl Plugin for CourtPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(AppState::Playing), (cleanup_arenas, spawn_arena).chain())
+            .add_systems(OnEnter(AppState::Splash), spawn_menu_arena)
             .add_systems(OnEnter(AppState::MainMenu), spawn_menu_arena)
             .add_systems(OnEnter(AppState::CharacterSelect), spawn_menu_arena)
             .add_systems(OnEnter(AppState::CourtSelect), spawn_menu_arena)

@@ -30,7 +30,9 @@ Open `http://localhost:8080`. WebGL2 required.
 | WASD / arrows | Move |
 | Shift | Sprint |
 | Space (hold / release) | Shot meter |
-| E | Pass (hold W for lob, S for bounce, Shift for skip) |
+| E | Chest pass (Shift+E skip) |
+| T | Lob pass |
+| G | Bounce pass |
 | Q | Steal |
 | F | Dunk attempt (paint) |
 | R | Block / contest |
