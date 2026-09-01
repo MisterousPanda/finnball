@@ -12,3 +12,4 @@ mkdir -p www/pkg
 wasm-bindgen --target web --out-dir www/pkg --no-typescript \
   target/wasm32-unknown-unknown/wasm-release/finnball.wasm
 echo "Web build ready → www/"
+echo "Railway: keep www/pkg local (gitignored), then: railway up"

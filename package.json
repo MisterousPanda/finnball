@@ -1,0 +1,9 @@
+{
+  "name": "finnball",
+  "private": true,
+  "description": "Railway IaC SDK for the FINNBALL web host.",
+  "license": "MIT",
+  "dependencies": {
+    "railway": "^3.11.0"
+  }
+}
