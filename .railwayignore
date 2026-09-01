@@ -1,0 +1,12 @@
+.git
+.github
+.cursor
+target
+dist
+.vercel
+node_modules
+**/*.rs.bk
+*.pdb
+.idea
+.vscode
+package-lock.json

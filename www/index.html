@@ -107,7 +107,7 @@
     <script type="module">
       const boot = document.getElementById("boot");
       try {
-        const mod = await import("./pkg/finnball.js");
+        const mod = await import("./game/finnball.js");
         await mod.default();
         if (boot) boot.style.opacity = "0";
         setTimeout(() => boot?.remove(), 700);
