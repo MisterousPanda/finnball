@@ -53,7 +53,7 @@ fn setup(mut commands: Commands) {
                 },
             ),
             (
-                Text::new("click or press any key"),
+                Text::new("click or press any key  •  sound on"),
                 title_font(14.0),
                 TextColor(TEXT),
                 Node {
