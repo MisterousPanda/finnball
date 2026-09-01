@@ -1,4 +1,7 @@
+use bevy::asset::RenderAssetUsages;
+use bevy::image::{ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::sim::{
     apply_aero, cylinder_score, BALL_RADIUS, COURT_HALF_LEN, COURT_HALF_WID, GRAVITY, HOOP_X,
@@ -85,22 +88,74 @@ pub struct FloorBounceEvent {
     pub speed: f32,
 }
 
+/// Procedural basketball skin: pebbled orange leather with the classic eight-panel seams.
+pub fn paint_ball_texture() -> (u32, u32, Vec<u8>) {
+    let (w, h) = (512u32, 256u32);
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    let seam_w = 0.012;
+    for py in 0..h {
+        let v = (py as f32 + 0.5) / h as f32;
+        for px in 0..w {
+            let u = (px as f32 + 0.5) / w as f32;
+            // pebble grain
+            let g = ((u * 900.0).sin() * (v * 450.0).cos()
+                + (u * 1370.0 + v * 210.0).sin() * 0.6
+                + (u * 233.0 - v * 777.0).cos() * 0.4)
+                * 0.5
+                + 0.5;
+            let shade = 0.9 + g * 0.16;
+            let mut col = [1.0 * shade, 0.46 * shade, 0.11 * shade];
+            // seams: equator, two meridians, two curved panel seams
+            let mut d = (v - 0.5).abs();
+            for m in [0.0f32, 0.25, 0.5, 0.75, 1.0] {
+                d = d.min((u - m).abs() * 0.5);
+            }
+            let curve = 0.5 + 0.3 * (u * std::f32::consts::TAU).sin();
+            let curve2 = 0.5 - 0.3 * (u * std::f32::consts::TAU).sin();
+            d = d.min((v - curve).abs() * 0.85);
+            d = d.min((v - curve2).abs() * 0.85);
+            let cover = ((seam_w - d) / 0.004 + 0.5).clamp(0.0, 1.0);
+            let seam = [0.08, 0.05, 0.04];
+            for i in 0..3 {
+                col[i] = col[i] + (seam[i] - col[i]) * cover;
+            }
+            let idx = ((py * w + px) * 4) as usize;
+            rgba[idx] = (col[0].clamp(0.0, 1.0) * 255.0) as u8;
+            rgba[idx + 1] = (col[1].clamp(0.0, 1.0) * 255.0) as u8;
+            rgba[idx + 2] = (col[2].clamp(0.0, 1.0) * 255.0) as u8;
+            rgba[idx + 3] = 255;
+        }
+    }
+    (w, h, rgba)
+}
+
 pub fn spawn_ball(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    images: &mut Assets<Image>,
     pos: Vec3,
 ) -> Entity {
+    let (w, h, rgba) = paint_ball_texture();
+    let mut img = Image::new(
+        Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        rgba,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    img.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
+    let skin = images.add(img);
     let mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(1.0, 0.48, 0.12),
-        perceptual_roughness: 0.42,
-        metallic: 0.08,
-        emissive: LinearRgba::new(0.55, 0.16, 0.02, 1.0),
-        ..default()
-    });
-    let stripe = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.04, 0.04, 0.05),
-        emissive: LinearRgba::new(0.02, 0.02, 0.02, 1.0),
+        base_color: Color::WHITE,
+        base_color_texture: Some(skin),
+        perceptual_roughness: 0.62,
+        metallic: 0.0,
+        emissive: LinearRgba::new(0.32, 0.1, 0.015, 1.0),
         ..default()
     });
     let glow = materials.add(StandardMaterial {
@@ -133,29 +188,13 @@ pub fn spawn_ball(
                 rim_hits: 0,
                 release_was_three: false,
             },
-            Mesh3d(meshes.add(Sphere::new(VISUAL_RADIUS))),
+            Mesh3d(meshes.add(Sphere::new(VISUAL_RADIUS).mesh().uv(40, 24))),
             MeshMaterial3d(mat),
             Transform::from_translation(pos),
             crate::court::ArenaRoot,
             DespawnOnExit(AppState::Playing),
         ))
         .with_children(|b| {
-            // Seams: three great-circle rings so the spin reads from any camera
-            let seam = meshes.add(Torus {
-                minor_radius: 0.008,
-                major_radius: VISUAL_RADIUS * 0.995,
-            });
-            b.spawn((Mesh3d(seam.clone()), MeshMaterial3d(stripe.clone())));
-            b.spawn((
-                Mesh3d(seam.clone()),
-                MeshMaterial3d(stripe.clone()),
-                Transform::from_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-            ));
-            b.spawn((
-                Mesh3d(seam),
-                MeshMaterial3d(stripe),
-                Transform::from_rotation(Quat::from_rotation_z(std::f32::consts::FRAC_PI_2)),
-            ));
             b.spawn((
                 Mesh3d(meshes.add(Sphere::new(VISUAL_RADIUS * 1.32))),
                 MeshMaterial3d(glow),
@@ -359,4 +398,27 @@ fn follow_ball_shadow(
     let scale = (0.55 + height * 0.12).clamp(0.45, 1.6);
     st.translation = Vec3::new(btf.translation.x, 0.025, btf.translation.z);
     st.scale = Vec3::new(scale, 1.0, scale);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ball_texture_is_orange_with_dark_seams() {
+        let (w, h, rgba) = paint_ball_texture();
+        assert_eq!(rgba.len(), (w * h * 4) as usize);
+        // A pixel in the middle of a panel is orange…
+        let px = |u: f32, v: f32| {
+            let x = (u * w as f32) as u32;
+            let y = (v * h as f32) as u32;
+            let i = ((y * w + x) * 4) as usize;
+            (rgba[i], rgba[i + 1], rgba[i + 2])
+        };
+        let panel = px(0.125, 0.42);
+        assert!(panel.0 > 200 && panel.2 < 60);
+        // …and the equator seam is dark.
+        let seam = px(0.125, 0.5);
+        assert!(seam.0 < 60);
+    }
 }

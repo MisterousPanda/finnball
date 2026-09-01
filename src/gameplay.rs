@@ -180,6 +180,7 @@ fn start_match(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
     config: Res<MatchConfig>,
     mut clock: ResMut<MatchClock>,
     mut score: ResMut<Scoreboard>,
@@ -259,6 +260,7 @@ fn start_match(
         &mut commands,
         &mut meshes,
         &mut materials,
+        &mut images,
         Vec3::new(-3.1, 1.1, 0.0),
     );
     if let Some(holder) = first_human {

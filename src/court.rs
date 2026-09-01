@@ -240,11 +240,8 @@ fn build_arena(
         ..default()
     });
     let net_mat = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.95, 0.95, 1.0, 0.55),
-        alpha_mode: AlphaMode::Blend,
-        perceptual_roughness: 0.8,
-        double_sided: true,
-        cull_mode: None,
+        base_color: Color::srgb(0.96, 0.96, 1.0),
+        perceptual_roughness: 0.85,
         ..default()
     });
     let pole_mat = materials.add(StandardMaterial {
@@ -1038,19 +1035,70 @@ fn spawn_hoop(
         MeshMaterial3d(rim.clone()),
         Transform::from_xyz(hoop_x + sign * (RIM_RADIUS + 0.1), RIM_HEIGHT - 0.02, 0.0),
     ));
+    // Net: hanging strings + two rings under a root that the ripple system scales
+    let string = meshes.add(Cuboid::new(0.012, 1.0, 0.012));
+    let ring_a = meshes.add(Torus {
+        minor_radius: 0.006,
+        major_radius: RIM_RADIUS * 0.78,
+    });
+    let ring_b = meshes.add(Torus {
+        minor_radius: 0.006,
+        major_radius: RIM_RADIUS * 0.55,
+    });
+    let net_len = 0.44;
+    let bottom_r = RIM_RADIUS * 0.5;
+    commands
+        .spawn((
+            ArenaRoot,
+            NetRipple {
+                rest_scale: Vec3::ONE,
+                pulse: 0.0,
+            },
+            Transform::from_xyz(hoop_x, RIM_HEIGHT - 0.02, 0.0),
+            Visibility::default(),
+        ))
+        .with_children(|n| {
+            let count = 14;
+            for i in 0..count {
+                let a = i as f32 / count as f32 * std::f32::consts::TAU;
+                let top = Vec3::new(
+                    a.cos() * RIM_RADIUS * 0.97,
+                    0.0,
+                    a.sin() * RIM_RADIUS * 0.97,
+                );
+                let bot = Vec3::new(a.cos() * bottom_r, -net_len, a.sin() * bottom_r);
+                let mid = (top + bot) * 0.5;
+                let dir = (bot - top).normalize();
+                // strings zig-zag: alternate lean left/right so they read as a mesh
+                let twist = if i % 2 == 0 { 0.18 } else { -0.18 };
+                let rot = Quat::from_rotation_arc(Vec3::NEG_Y, dir) * Quat::from_rotation_y(twist);
+                n.spawn((
+                    Mesh3d(string.clone()),
+                    MeshMaterial3d(net.clone()),
+                    Transform {
+                        translation: mid,
+                        rotation: rot,
+                        scale: Vec3::new(1.0, (bot - top).length(), 1.0),
+                    },
+                ));
+            }
+            n.spawn((
+                Mesh3d(ring_a.clone()),
+                MeshMaterial3d(net.clone()),
+                Transform::from_xyz(0.0, -net_len * 0.4, 0.0),
+            ));
+            n.spawn((
+                Mesh3d(ring_b.clone()),
+                MeshMaterial3d(net.clone()),
+                Transform::from_xyz(0.0, -net_len * 0.85, 0.0),
+            ));
+        });
+    // Backboard bottom padding
     commands.spawn((
         ArenaRoot,
-        NetRipple {
-            rest_scale: Vec3::ONE,
-            pulse: 0.0,
-        },
-        Mesh3d(meshes.add(Cone::new(RIM_RADIUS * 0.95, 0.45))),
-        MeshMaterial3d(net.clone()),
-        Transform {
-            translation: Vec3::new(hoop_x, RIM_HEIGHT - 0.24, 0.0),
-            rotation: Quat::from_rotation_x(std::f32::consts::PI),
-            ..default()
-        },
+        Mesh3d(meshes.add(Cuboid::new(0.16, 0.08, 1.9))),
+        MeshMaterial3d(rim.clone()),
+        Transform::from_xyz(board_x, RIM_HEIGHT + 0.32 - 0.56, 0.0),
     ));
     // Stanchion: padded base, angled arm, pole
     commands.spawn((
