@@ -37,7 +37,13 @@ fn main() {
                     }),
                     ..default()
                 })
-                .set(ImagePlugin::default_nearest()),
+                .set(ImagePlugin::default_nearest())
+                // No `.meta` sidecars ship with the game; on the web a static host would
+                // answer those probes with index.html and the loader would choke on it.
+                .set(AssetPlugin {
+                    meta_check: bevy::asset::AssetMetaCheck::Never,
+                    ..default()
+                }),
         )
         .insert_resource(ClearColor(Color::srgb(0.02, 0.03, 0.06)))
         .insert_resource(states::MatchConfig::default())
