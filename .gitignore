@@ -9,4 +9,6 @@
 node_modules
 package-lock.json
 www/pkg
+www/game
+www/assets
 

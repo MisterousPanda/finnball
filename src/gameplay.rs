@@ -6,7 +6,7 @@ use crate::roster::Side;
 use crate::sim::{
     BALL_RADIUS, GRAVITY, HOOP_X, PAINT_DEPTH, RIM_HEIGHT, PassKind, ShotType, ballistic_velocity,
     clamp_to_court, classify_shot, contest_factor, dribble_cadence, flight_time_for_distance,
-    in_paint, meter_accuracy, points_for, release_height, release_spin, shot_kind, shot_make_chance,
+    in_paint, meter_accuracy, release_height, release_spin, shot_kind, shot_make_chance,
     steal_chance,
 };
 use crate::states::{AppState, GameMode, MatchConfig, Paused};
