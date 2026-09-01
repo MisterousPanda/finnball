@@ -222,7 +222,7 @@ fn tick_clock(
     mut ticker: ResMut<Ticker>,
     mut next: ResMut<NextState<AppState>>,
     mut score: ResMut<Scoreboard>,
-    mut ball: Query<(&mut Transform, &mut BallVel, &mut BallState), With<Ball>>,
+    mut ball: Query<(&mut Transform, &mut BallVel, &mut BallState), (With<Ball>, Without<Player>)>,
     mut players: Query<&mut Transform, (With<Player>, Without<Ball>)>,
 ) {
     ticker.age += time.delta_secs();
@@ -263,7 +263,7 @@ fn tick_clock(
 }
 
 fn reset_to_half(
-    ball: &mut Query<(&mut Transform, &mut BallVel, &mut BallState), With<Ball>>,
+    ball: &mut Query<(&mut Transform, &mut BallVel, &mut BallState), (With<Ball>, Without<Player>)>,
     _players: &mut Query<&mut Transform, (With<Player>, Without<Ball>)>,
     _positions: bool,
 ) {
@@ -383,7 +383,7 @@ fn pickup_loose_ball(
     mut ticker: ResMut<Ticker>,
     mut clock: ResMut<MatchClock>,
     config: Res<MatchConfig>,
-    mut ball: Query<(&Transform, &mut BallState, &BallVel), With<Ball>>,
+    mut ball: Query<(&Transform, &mut BallState, &BallVel), (With<Ball>, Without<Player>)>,
     players: Query<(Entity, &Transform, &Ratings, &Player), Without<Ball>>,
 ) {
     if paused.0 {
@@ -428,7 +428,7 @@ fn shoot_and_pass(
     mut clock: ResMut<MatchClock>,
     control: Res<LiveControl>,
     mut plays: MessageWriter<PlayCall>,
-    mut ball: Query<(&mut Transform, &mut BallVel, &mut BallSpin, &mut BallState), With<Ball>>,
+    mut ball: Query<(&mut Transform, &mut BallVel, &mut BallSpin, &mut BallState), (With<Ball>, Without<Player>)>,
     mut players: Query<(
         Entity,
         &Player,
@@ -439,7 +439,7 @@ fn shoot_and_pass(
         &mut PoseClock,
         &mut BoxLine,
         &Stamina,
-    )>,
+    ), Without<Ball>>,
 ) {
     if paused.0 {
         intent.shoot_released = false;

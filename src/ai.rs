@@ -24,7 +24,7 @@ fn ai_move(
     time: Res<Time<Fixed>>,
     paused: Res<Paused>,
     control: Res<LiveControl>,
-    ball: Query<(&Transform, &BallState), With<Ball>>,
+    ball: Query<(&Transform, &BallState), (With<Ball>, Without<Player>)>,
     mut players: Query<(
         Entity,
         &Player,
@@ -34,7 +34,7 @@ fn ai_move(
         &Pose,
         &Stamina,
         &mut AiBrain,
-    )>,
+    ), Without<Ball>>,
 ) {
     if paused.0 {
         return;
@@ -124,7 +124,10 @@ fn ai_decisions(
     intent: ResMut<PlayerIntent>,
     control: Res<LiveControl>,
     clock: Res<MatchClock>,
-    mut ball_q: Query<(&Transform, &mut crate::ball::BallVel, &mut BallState), With<Ball>>,
+    mut ball_q: Query<
+        (&Transform, &mut crate::ball::BallVel, &mut BallState),
+        (With<Ball>, Without<Player>),
+    >,
     mut players: Query<(
         Entity,
         &Player,
@@ -135,7 +138,7 @@ fn ai_decisions(
         &mut PoseClock,
         &Stamina,
         &mut AiBrain,
-    )>,
+    ), Without<Ball>>,
 ) {
     if paused.0 || config.mode == GameMode::Practice {
         return;

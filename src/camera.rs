@@ -11,10 +11,8 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraSettings>()
             .add_systems(Startup, spawn_camera)
-            .add_systems(
-                Update,
-                (orbit_menu_cam, follow_game_cam),
-            );
+        .add_systems(Update, orbit_menu_cam.run_if(not(in_state(AppState::Playing))))
+        .add_systems(Update, follow_game_cam.run_if(in_state(AppState::Playing)));
     }
 }
 
