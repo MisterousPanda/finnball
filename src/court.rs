@@ -305,7 +305,7 @@ fn build_arena(
         ArenaRoot,
         DirectionalLight {
             illuminance: 4_500.0,
-            shadows_enabled: false,
+            shadows_enabled: false, // keep off — WASM + llvmpipe cannot afford cascaded shadows
             color: theme.ambient,
             ..default()
         },
@@ -322,7 +322,7 @@ fn build_arena(
                 intensity: 1_200_000.0,
                 range: 40.0,
                 color: c,
-                shadows_enabled: false,
+                shadows_enabled: false, // keep off — WASM + llvmpipe cannot afford cascaded shadows
                 ..default()
             },
             Transform::from_xyz(x, 12.0, z),

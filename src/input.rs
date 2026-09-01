@@ -48,7 +48,17 @@ fn read_input(
     intent.pass = keys.just_pressed(KeyCode::KeyE);
     intent.steal = keys.just_pressed(KeyCode::KeyQ);
     intent.special = keys.just_pressed(KeyCode::KeyF);
+    intent.block = keys.just_pressed(KeyCode::KeyR);
     intent.switch = keys.just_pressed(KeyCode::Tab) || keys.just_pressed(KeyCode::KeyC);
+    intent.pass_kind = if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
+        crate::sim::PassKind::Lob
+    } else if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
+        crate::sim::PassKind::Bounce
+    } else if intent.sprint {
+        crate::sim::PassKind::Skip
+    } else {
+        crate::sim::PassKind::Chest
+    };
 }
 
 fn switch_player(

@@ -197,6 +197,7 @@ fn ai_decisions(
         st.hold = Hold::Shot;
         st.holder = None;
         st.shooter = Some(e);
+        st.rim_hits = 0;
         if let Ok((_, _, _, _, _, mut pose, mut clock, _, _)) = players.get_mut(e) {
             *pose = if should_dunk { Pose::Dunk } else { Pose::Shoot };
             clock.0 = 0.0;

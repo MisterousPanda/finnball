@@ -11,5 +11,8 @@ cargo build --profile wasm-release --target wasm32-unknown-unknown
 mkdir -p www/pkg
 wasm-bindgen --target web --out-dir www/pkg --no-typescript \
   target/wasm32-unknown-unknown/wasm-release/finnball.wasm
-echo "Web build ready → www/"
+mkdir -p www/assets
+rm -rf www/assets/audio
+cp -r assets/audio www/assets/audio
+echo "Web build ready → www/ (WASM + audio assets)"
 echo "Railway: keep www/pkg local (gitignored), then: railway up"

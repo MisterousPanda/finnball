@@ -81,6 +81,29 @@
       <div class="bar"><i></i></div>
     </div>
     <canvas id="bevy"></canvas>
+    <script>
+      (function () {
+        const events = ["click", "keydown", "pointerup", "touchend"];
+        const AC = window.AudioContext || window.webkitAudioContext;
+        const contexts = [];
+        if (AC) {
+          window.AudioContext = new Proxy(AC, {
+            construct(Target, args) {
+              const ctx = new Target(...args);
+              contexts.push(ctx);
+              return ctx;
+            },
+          });
+        }
+        function resume() {
+          contexts.forEach((c) => c.state !== "running" && c.resume());
+          if (contexts.length && contexts.every((c) => c.state === "running")) {
+            events.forEach((e) => document.removeEventListener(e, resume));
+          }
+        }
+        events.forEach((e) => document.addEventListener(e, resume));
+      })();
+    </script>
     <script type="module">
       const boot = document.getElementById("boot");
       try {

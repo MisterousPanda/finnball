@@ -3,8 +3,9 @@ use bevy::prelude::*;
 use crate::ball::{Ball, BallSpin, BallState, BallVel, BucketEvent, Hold, spawn_ball};
 use crate::roster::Side;
 use crate::sim::{
-    BALL_RADIUS, GRAVITY, HOOP_X, PAINT_DEPTH, RIM_HEIGHT, ballistic_velocity, clamp_to_court,
-    contest_factor, flight_time_for_distance, in_paint, points_for, shot_kind, shot_make_chance,
+    BALL_RADIUS, GRAVITY, HOOP_X, PAINT_DEPTH, RIM_HEIGHT, PassKind, ShotType, ballistic_velocity,
+    clamp_to_court, classify_shot, contest_factor, dribble_cadence, flight_time_for_distance,
+    in_paint, meter_accuracy, points_for, release_height, release_spin, shot_kind, shot_make_chance,
     steal_chance,
 };
 use crate::states::{AppState, GameMode, MatchConfig, Paused};
@@ -20,8 +21,12 @@ impl Plugin for GameplayPlugin {
             .init_resource::<Ticker>()
             .init_resource::<GameRng>()
             .init_resource::<LiveControl>()
+            .init_resource::<LastPass>()
             .add_message::<BucketEvent>()
             .add_message::<PlayCall>()
+            .add_message::<DribbleTickEvent>()
+            .add_message::<StealEvent>()
+            .add_message::<ViolationEvent>()
             .add_systems(OnEnter(AppState::Playing), start_match)
             .add_systems(
                 Update,
@@ -41,6 +46,7 @@ impl Plugin for GameplayPlugin {
                     pickup_loose_ball,
                     shoot_and_pass,
                     steal_attempts,
+                    block_attempts,
                 )
                     .chain()
                     .run_if(in_state(AppState::Playing)),
@@ -121,11 +127,33 @@ pub struct PlayerIntent {
     pub steal: bool,
     pub special: bool,
     pub switch: bool,
+    pub block: bool,
+    pub pass_kind: PassKind,
 }
 
 #[derive(Message, Clone)]
 pub struct PlayCall {
     pub text: String,
+}
+
+#[derive(Message, Clone, Copy)]
+pub struct DribbleTickEvent {
+    pub pos: Vec3,
+}
+
+#[derive(Message, Clone, Copy)]
+pub struct StealEvent {
+    pub success: bool,
+    pub pos: Vec3,
+}
+
+#[derive(Message, Clone, Copy)]
+pub struct ViolationEvent;
+
+#[derive(Resource, Default)]
+pub struct LastPass {
+    pub passer: Option<Entity>,
+    pub age: f32,
 }
 
 #[derive(Component)]
@@ -159,6 +187,7 @@ fn start_match(
     clock.running = true;
     ticker.line = "TIP-OFF — FINNBALL LIVE".into();
     ticker.age = 0.0;
+    commands.insert_resource(LastPass::default());
 
     let home_spots = [
         Vec3::new(-3.5, 0.0, 0.0),
@@ -220,12 +249,15 @@ fn tick_clock(
     config: Res<MatchConfig>,
     mut clock: ResMut<MatchClock>,
     mut ticker: ResMut<Ticker>,
+    mut last_pass: ResMut<LastPass>,
+    mut viol: MessageWriter<ViolationEvent>,
     mut next: ResMut<NextState<AppState>>,
     mut score: ResMut<Scoreboard>,
     mut ball: Query<(&mut Transform, &mut BallVel, &mut BallState), (With<Ball>, Without<Player>)>,
     mut players: Query<&mut Transform, (With<Player>, Without<Ball>)>,
 ) {
     ticker.age += time.delta_secs();
+    last_pass.age += time.delta_secs();
     if paused.0 || config.mode == GameMode::Practice {
         return;
     }
@@ -238,6 +270,7 @@ fn tick_clock(
         clock.shot = config.shot_clock;
         ticker.line = "SHOT CLOCK VIOLATION".into();
         ticker.age = 0.0;
+        viol.write(ViolationEvent);
         reset_to_half(&mut ball, &mut players, false);
     }
     if clock.remaining <= 0.0 {
@@ -273,6 +306,8 @@ fn reset_to_half(
         st.hold = Hold::Loose;
         st.holder = None;
         st.shooter = None;
+        st.last_passer = None;
+        st.rim_hits = 0;
     }
 }
 
@@ -349,13 +384,14 @@ fn apply_intents(
 fn follow_dribble(
     paused: Res<Paused>,
     time: Res<Time>,
+    mut ticks: MessageWriter<DribbleTickEvent>,
     holders: Query<(&Transform, &MoveVel, &Pose), With<Player>>,
-    mut ball: Query<(&mut Transform, &mut BallVel, &BallState), (With<Ball>, Without<Player>)>,
+    mut ball: Query<(&mut Transform, &mut BallVel, &mut BallState), (With<Ball>, Without<Player>)>,
 ) {
     if paused.0 {
         return;
     }
-    let Ok((mut btf, mut bvel, state)) = ball.single_mut() else {
+    let Ok((mut btf, mut bvel, mut state)) = ball.single_mut() else {
         return;
     };
     let Some(h) = state.holder else {
@@ -367,8 +403,19 @@ fn follow_dribble(
     let Ok((ptf, vel, pose)) = holders.get(h) else {
         return;
     };
-    let bounce = (time.elapsed_secs() * 11.0).sin().abs() * 0.42 + BALL_RADIUS + 0.05;
-    let hand = ptf.right() * 0.38 + ptf.forward() * 0.15;
+    let speed = Vec3::new(vel.0.x, 0.0, vel.0.z).length();
+    let cadence = dribble_cadence(speed);
+    let prev = state.dribble_phase;
+    state.dribble_phase += time.delta_secs() * cadence * std::f32::consts::TAU;
+    let phase = state.dribble_phase;
+    // Crossed the floor (phase wrap through π)
+    let prev_sin = prev.sin();
+    if prev_sin > 0.0 && phase.sin() <= 0.0 {
+        ticks.write(DribbleTickEvent { pos: btf.translation });
+    }
+    let peak = (0.38 + speed * 0.015).clamp(0.28, 0.52);
+    let bounce = BALL_RADIUS + 0.03 + (1.0 + phase.cos()) * 0.5 * peak;
+    let hand = ptf.right() * 0.38 + ptf.forward() * 0.18;
     let height = if matches!(*pose, Pose::Shoot | Pose::Dunk) {
         1.85
     } else {
@@ -384,7 +431,7 @@ fn pickup_loose_ball(
     mut clock: ResMut<MatchClock>,
     config: Res<MatchConfig>,
     mut ball: Query<(&Transform, &mut BallState, &BallVel), (With<Ball>, Without<Player>)>,
-    players: Query<(Entity, &Transform, &Ratings, &Player), Without<Ball>>,
+    mut players: Query<(Entity, &Transform, &Ratings, &Player, &mut BoxLine), Without<Ball>>,
 ) {
     if paused.0 {
         return;
@@ -399,7 +446,7 @@ fn pickup_loose_ball(
         return;
     }
     let mut best: Option<(Entity, f32)> = None;
-    for (e, tf, r, _p) in &players {
+    for (e, tf, r, _p, _) in &players {
         let d = tf.translation.distance(btf.translation);
         let reach = 0.85 + r.height * 0.12 + r.rebound / 220.0;
         if d < reach {
@@ -410,11 +457,21 @@ fn pickup_loose_ball(
         }
     }
     if let Some((e, _)) = best {
+        let rebound = state.shooter.is_some() || state.rim_hits > 0;
         state.hold = Hold::Held;
         state.holder = Some(e);
         state.last_touch = Some(e);
+        state.shooter = None;
+        state.rim_hits = 0;
         clock.shot = config.shot_clock;
-        ticker.line = "POSSESSION CHANGE".into();
+        if rebound {
+            if let Ok((_, _, _, _, mut boxl)) = players.get_mut(e) {
+                boxl.reb += 1;
+            }
+            ticker.line = "REBOUND — THE ROCK IS OURS".into();
+        } else {
+            ticker.line = "POSSESSION CHANGE".into();
+        }
         ticker.age = 0.0;
     }
 }
@@ -428,6 +485,7 @@ fn shoot_and_pass(
     mut clock: ResMut<MatchClock>,
     control: Res<LiveControl>,
     mut plays: MessageWriter<PlayCall>,
+    mut last_pass: ResMut<LastPass>,
     mut ball: Query<(&mut Transform, &mut BallVel, &mut BallSpin, &mut BallState), (With<Ball>, Without<Player>)>,
     mut players: Query<(
         Entity,
@@ -483,24 +541,42 @@ fn shoot_and_pass(
 
     if intent.pass && state.hold == Hold::Held && state.holder == Some(ctrl) {
         if let Some(target) = nearest_teammate(&roster, me_e, me_side, me_pos) {
-            let dest = target.2 + Vec3::Y * 1.4;
-            let t = (me_pos.distance(dest) / 14.0).clamp(0.18, 0.55);
+            let kind = intent.pass_kind;
+            let dest = match kind {
+                PassKind::Lob => target.2 + Vec3::Y * 2.6,
+                PassKind::Bounce => target.2 + Vec3::Y * 0.35,
+                _ => target.2 + Vec3::Y * 1.4,
+            };
+            let (flight, grav) = match kind {
+                PassKind::Lob => ((me_pos.distance(dest) / 9.0).clamp(0.45, 0.85), GRAVITY * 0.55),
+                PassKind::Bounce => ((me_pos.distance(dest) / 11.0).clamp(0.28, 0.55), GRAVITY * 0.9),
+                PassKind::Skip => ((me_pos.distance(dest) / 15.0).clamp(0.16, 0.38), GRAVITY * 0.15),
+                PassKind::Chest => ((me_pos.distance(dest) / 13.0).clamp(0.18, 0.5), GRAVITY * 0.28),
+            };
             let v = ballistic_velocity(
                 [btf.translation.x, 1.4, btf.translation.z],
                 [dest.x, dest.y, dest.z],
-                t,
-                GRAVITY * 0.35,
+                flight,
+                grav,
             );
             bvel.0 = Vec3::new(v[0], v[1], v[2]);
             state.hold = Hold::Pass;
             state.holder = None;
             state.last_touch = Some(ctrl);
+            state.last_passer = Some(ctrl);
+            last_pass.passer = Some(ctrl);
+            last_pass.age = 0.0;
             spin.0 = Vec3::new(0.0, 18.0, 0.0);
             if let Ok((_, _, _, _, _, mut pose, mut clock, _, _)) = players.get_mut(ctrl) {
                 *pose = Pose::Pass;
                 clock.0 = 0.0;
             }
-            ticker.line = "SILK DISH — ON THE MOVE".into();
+            ticker.line = match kind {
+                PassKind::Lob => "LOB — LOOKING FOR THE OOP".into(),
+                PassKind::Bounce => "BOUNCE PASS — AROUND THE TREE".into(),
+                PassKind::Skip => "SKIP PASS — CROSS COURT".into(),
+                PassKind::Chest => "SILK DISH — ON THE MOVE".into(),
+            };
             ticker.age = 0.0;
         }
         intent.pass = false;
@@ -512,17 +588,30 @@ fn shoot_and_pass(
         let hoop = Vec3::new(hoop_x, RIM_HEIGHT, 0.0);
         let dist = me_pos.distance(Vec3::new(hoop_x, me_pos.y, 0.0));
         let in_the_paint = in_paint(me_pos.x, me_pos.z, hoop_x);
-        let driving = me_vel.dot((hoop - me_pos).normalize_or_zero()) > 2.2;
-        let meter_err = (meter.value - 0.72).abs();
+        let to_hoop = (hoop - me_pos).normalize_or_zero();
+        let driving = me_vel.dot(to_hoop) > 2.2;
+        let moving_away = me_vel.dot(to_hoop) < -1.5;
+        let lateral = me_vel.cross(to_hoop).y.abs() > 2.0;
+        let speed = me_vel.length();
+        let meter_err = meter_accuracy(meter.value);
         meter.armed = false;
         meter.value = 0.0;
         meter.rising = true;
 
         let contest = nearest_contest(&roster, me_e, me_side, me_pos);
+        let shot = classify_shot(
+            dist,
+            in_the_paint,
+            driving,
+            moving_away,
+            lateral,
+            dunk,
+            mid,
+            intent.special,
+            speed,
+        );
 
-        if (intent.special || (in_the_paint && driving && dunk > 70.0)) && dist < PAINT_DEPTH + 0.8
-        {
-            // Dunk cutscene-lite
+        if shot == ShotType::Dunk && dist < PAINT_DEPTH + 0.8 {
             let t = 0.55;
             let v = ballistic_velocity(
                 [btf.translation.x, 1.8, btf.translation.z],
@@ -530,10 +619,12 @@ fn shoot_and_pass(
                 t,
                 GRAVITY,
             );
-            bvel.0 = Vec3::new(v[0], v[1], v[2]);
+            bvel.0 = Vec3::new(v[0], v[1], v[2]) + me_vel * 0.15;
+            spin.0 = Vec3::from_array(release_spin(shot, 1.0));
             state.hold = Hold::Shot;
             state.holder = None;
             state.shooter = Some(ctrl);
+            state.rim_hits = 0;
             if let Ok((_, _, _, _, _, mut pose, mut clock, mut boxl, _)) = players.get_mut(ctrl) {
                 *pose = Pose::Dunk;
                 clock.0 = 0.0;
@@ -549,7 +640,8 @@ fn shoot_and_pass(
             return;
         }
 
-        let is_three = matches!(shot_kind(me_pos.x, me_pos.z, hoop_x), crate::sim::ShotKind::Three);
+        let is_three = matches!(shot, ShotType::ThreePointer | ShotType::LogoHeave)
+            || matches!(shot_kind(me_pos.x, me_pos.z, hoop_x), crate::sim::ShotKind::Three);
         let rating = if is_three { three } else { mid };
         let chance = shot_make_chance(rating, dist, contest, meter_err, stam, is_three);
         let mut target = hoop;
@@ -558,30 +650,36 @@ fn shoot_and_pass(
         } else {
             target += Vec3::new(rng.range(-0.04, 0.04), 0.02, rng.range(-0.04, 0.04));
         }
-        let flight = flight_time_for_distance(dist);
+        let height = release_height(shot);
+        let flight = match shot {
+            ShotType::Layup | ShotType::ReverseLayup | ShotType::FingerRoll => 0.42,
+            ShotType::Underhand => 0.55,
+            ShotType::Floater => 0.62,
+            ShotType::Hook => 0.7,
+            ShotType::LogoHeave => (flight_time_for_distance(dist) * 1.05).min(1.6),
+            _ => flight_time_for_distance(dist),
+        };
         let v = ballistic_velocity(
-            [me_pos.x, 1.9, me_pos.z],
+            [me_pos.x, height, me_pos.z],
             [target.x, target.y, target.z],
             flight,
             GRAVITY,
         );
-        btf.translation = me_pos + Vec3::Y * 1.9;
-        bvel.0 = Vec3::new(v[0], v[1], v[2]);
-        spin.0 = Vec3::new(-10.0, 4.0, 0.0);
+        btf.translation = me_pos + Vec3::Y * height;
+        bvel.0 = Vec3::new(v[0], v[1], v[2]) + me_vel * 0.12;
+        let quality = (1.0 - meter_err * 1.2).clamp(0.5, 1.1);
+        spin.0 = Vec3::from_array(release_spin(shot, quality));
         state.hold = Hold::Shot;
         state.holder = None;
         state.shooter = Some(ctrl);
+        state.rim_hits = 0;
         if let Ok((_, _, _, _, _, mut pose, mut clock, mut boxl, _)) = players.get_mut(ctrl) {
             *pose = Pose::Shoot;
             clock.0 = 0.0;
             boxl.fg_att += 1;
         }
         clock.running = true;
-        ticker.line = if is_three {
-            "FOR THREE".into()
-        } else {
-            "PULL-UP J".into()
-        };
+        ticker.line = shot.label().into();
         ticker.age = 0.0;
         let _ = pass;
     }
@@ -624,6 +722,7 @@ fn steal_attempts(
     mut intent: ResMut<PlayerIntent>,
     mut rng: ResMut<GameRng>,
     mut ticker: ResMut<Ticker>,
+    mut steals: MessageWriter<StealEvent>,
     control: Res<LiveControl>,
     mut ball: Query<&mut BallState, With<Ball>>,
     mut players: Query<(Entity, &Player, &Ratings, &Transform, &mut Pose, &mut PoseClock, &mut BoxLine)>,
@@ -669,6 +768,10 @@ fn steal_attempts(
     if rng.f32() < steal_chance(steal, handle, d) {
         state.holder = Some(ctrl);
         state.last_touch = Some(ctrl);
+        steals.write(StealEvent {
+            success: true,
+            pos: tp,
+        });
         ticker.line = "STRIPPED — GHOST MODE".into();
         ticker.age = 0.0;
         if let Ok((_, _, _, _, mut pose, mut clock, mut boxl)) = players.get_mut(ctrl) {
@@ -683,7 +786,57 @@ fn steal_attempts(
     } else if let Ok((_, _, _, _, mut pose, mut clock, _)) = players.get_mut(ctrl) {
         *pose = Pose::Stumble;
         clock.0 = 0.0;
+        steals.write(StealEvent {
+            success: false,
+            pos: tp,
+        });
         ticker.line = "REACH-IN — NO WHISTLE, NO BALL".into();
+        ticker.age = 0.0;
+    }
+}
+
+fn block_attempts(
+    paused: Res<Paused>,
+    mut intent: ResMut<PlayerIntent>,
+    mut rng: ResMut<GameRng>,
+    mut ticker: ResMut<Ticker>,
+    control: Res<LiveControl>,
+    mut ball: Query<(&Transform, &mut BallVel, &mut BallState), (With<Ball>, Without<Player>)>,
+    mut players: Query<(Entity, &Player, &Ratings, &Transform, &mut Pose, &mut PoseClock, &mut BoxLine), Without<Ball>>,
+) {
+    if paused.0 || !intent.block {
+        intent.block = false;
+        return;
+    }
+    intent.block = false;
+    let Some(ctrl) = control.entity else {
+        return;
+    };
+    let Ok((btf, mut bvel, mut state)) = ball.single_mut() else {
+        return;
+    };
+    if !matches!(state.hold, Hold::Shot) {
+        if let Ok((_, _, _, _, mut pose, mut clock, _)) = players.get_mut(ctrl) {
+            *pose = Pose::Block;
+            clock.0 = 0.0;
+        }
+        return;
+    }
+    let Ok((_, _, ratings, ptf, mut pose, mut clock, mut boxl)) = players.get_mut(ctrl) else {
+        return;
+    };
+    *pose = Pose::Block;
+    clock.0 = 0.0;
+    let d = ptf.translation.distance(btf.translation);
+    let window = btf.translation.y > 1.6 && btf.translation.y < 3.2;
+    let chance = (ratings.block / 100.0) * (1.15 - d * 0.45).clamp(0.0, 1.0);
+    if window && d < 2.2 && rng.f32() < chance {
+        bvel.0 = Vec3::new(-bvel.0.x * 0.35, bvel.0.y.abs() * 0.2, -bvel.0.z * 0.35)
+            + Vec3::new(rng.range(-2.0, 2.0), 1.2, rng.range(-2.0, 2.0));
+        state.hold = Hold::Loose;
+        state.shooter = None;
+        boxl.blk += 1;
+        ticker.line = "REJECTED — GET THAT OUTTA HERE".into();
         ticker.age = 0.0;
     }
 }
@@ -693,6 +846,7 @@ fn handle_buckets(
     mut score: ResMut<Scoreboard>,
     mut ticker: ResMut<Ticker>,
     mut clock: ResMut<MatchClock>,
+    mut last_pass: ResMut<LastPass>,
     config: Res<MatchConfig>,
     mut players: Query<(Entity, &Player, &Transform, &mut Pose, &mut PoseClock, &mut BoxLine)>,
     mut next: ResMut<NextState<AppState>>,
@@ -712,6 +866,15 @@ fn handle_buckets(
                 boxl.fg_made += 1;
                 *pose = Pose::Celebrate;
                 clockp.0 = 0.0;
+            }
+            if last_pass.age < 3.2 {
+                if let Some(passer) = last_pass.passer {
+                    if Some(passer) != ev.shooter {
+                        if let Ok((_, _, _, _, _, mut boxl)) = players.get_mut(passer) {
+                            boxl.ast += 1;
+                        }
+                    }
+                }
             }
         } else {
             // infer by hoop
@@ -737,6 +900,8 @@ fn handle_buckets(
             )
         };
         ticker.age = 0.0;
+        last_pass.passer = None;
+        last_pass.age = 99.0;
         clock.shot = config.shot_clock;
         if config.mode != GameMode::Practice && clock.quarter > 4 && score.home != score.away {
             next.set(AppState::GameOver);

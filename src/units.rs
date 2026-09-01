@@ -12,7 +12,8 @@ impl Plugin for UnitsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (face_velocity, animate_rigs, stamina_regen).run_if(in_state(crate::states::AppState::Playing)),
+            (face_velocity, animate_rigs, update_face_expr, stamina_regen)
+                .run_if(in_state(crate::states::AppState::Playing)),
         );
     }
 }
@@ -91,6 +92,28 @@ pub struct Rig {
     pub r_arm: Entity,
     pub l_leg: Entity,
     pub r_leg: Entity,
+}
+
+/// Face parts live as children; this handle sits on the player root.
+#[derive(Component)]
+pub struct FaceRig {
+    pub brow_l: Entity,
+    pub brow_r: Entity,
+    pub mouth: Entity,
+    pub iris_l: Entity,
+    pub iris_r: Entity,
+    pub blush_l: Entity,
+    pub blush_r: Entity,
+}
+
+#[derive(Component, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FaceExpr {
+    #[default]
+    Neutral,
+    Focus,
+    Celebrate,
+    Angry,
+    Pain,
 }
 
 #[derive(Component)]
@@ -172,6 +195,29 @@ pub fn spawn_player(
         perceptual_roughness: 0.35,
         ..default()
     });
+    let brow_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.1, 0.07, 0.07),
+        unlit: true,
+        ..default()
+    });
+    let mouth_mat = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.62, 0.16, 0.22),
+        unlit: true,
+        ..default()
+    });
+    let blush_mat = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.42, 0.55, 0.7),
+        emissive: LinearRgba::new(0.55, 0.08, 0.16, 1.0),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    let number_mat = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        emissive: LinearRgba::new(0.45, 0.45, 0.5, 1.0),
+        unlit: true,
+        ..default()
+    });
 
     let sphere = meshes.add(Sphere::new(1.0));
     let capsule = meshes.add(Capsule3d::new(0.12, 0.38));
@@ -183,6 +229,13 @@ pub fn spawn_player(
     let mut r_arm = Entity::PLACEHOLDER;
     let mut l_leg = Entity::PLACEHOLDER;
     let mut r_leg = Entity::PLACEHOLDER;
+    let mut brow_l = Entity::PLACEHOLDER;
+    let mut brow_r = Entity::PLACEHOLDER;
+    let mut mouth = Entity::PLACEHOLDER;
+    let mut iris_l = Entity::PLACEHOLDER;
+    let mut iris_r = Entity::PLACEHOLDER;
+    let mut blush_l = Entity::PLACEHOLDER;
+    let mut blush_r = Entity::PLACEHOLDER;
 
     let root = commands
         .spawn((
@@ -197,6 +250,7 @@ pub fn spawn_player(
             Stamina(1.0),
             Pose::Idle,
             PoseClock(0.0),
+            FaceExpr::Neutral,
             BoxLine::default(),
             Transform::from_translation(pos).with_scale(Vec3::splat(scale)),
             Visibility::default(),
@@ -235,13 +289,13 @@ pub fn spawn_player(
                     },
                 ))
                 .id();
-            // Anime eyes
+            // Anime eyes — oversized whites so they read at broadcast distance
             root.spawn((
                 Mesh3d(sphere.clone()),
                 MeshMaterial3d(eye_w.clone()),
                 Transform {
-                    translation: Vec3::new(-0.08, 1.74, 0.18),
-                    scale: Vec3::new(0.07, 0.09, 0.04),
+                    translation: Vec3::new(-0.085, 1.745, 0.185),
+                    scale: Vec3::new(0.09, 0.11, 0.045),
                     ..default()
                 },
             ));
@@ -249,29 +303,94 @@ pub fn spawn_player(
                 Mesh3d(sphere.clone()),
                 MeshMaterial3d(eye_w),
                 Transform {
-                    translation: Vec3::new(0.08, 1.74, 0.18),
-                    scale: Vec3::new(0.07, 0.09, 0.04),
+                    translation: Vec3::new(0.085, 1.745, 0.185),
+                    scale: Vec3::new(0.09, 0.11, 0.045),
                     ..default()
                 },
             ));
-            root.spawn((
-                Mesh3d(sphere.clone()),
-                MeshMaterial3d(eye_i.clone()),
-                Transform {
-                    translation: Vec3::new(-0.08, 1.735, 0.21),
-                    scale: Vec3::splat(0.035),
-                    ..default()
-                },
-            ));
-            root.spawn((
-                Mesh3d(sphere.clone()),
-                MeshMaterial3d(eye_i),
-                Transform {
-                    translation: Vec3::new(0.08, 1.735, 0.21),
-                    scale: Vec3::splat(0.035),
-                    ..default()
-                },
-            ));
+            iris_l = root
+                .spawn((
+                    Mesh3d(sphere.clone()),
+                    MeshMaterial3d(eye_i.clone()),
+                    Transform {
+                        translation: Vec3::new(-0.085, 1.74, 0.22),
+                        scale: Vec3::splat(0.042),
+                        ..default()
+                    },
+                ))
+                .id();
+            iris_r = root
+                .spawn((
+                    Mesh3d(sphere.clone()),
+                    MeshMaterial3d(eye_i),
+                    Transform {
+                        translation: Vec3::new(0.085, 1.74, 0.22),
+                        scale: Vec3::splat(0.042),
+                        ..default()
+                    },
+                ))
+                .id();
+            brow_l = root
+                .spawn((
+                    Mesh3d(cuboid.clone()),
+                    MeshMaterial3d(brow_mat.clone()),
+                    Transform {
+                        translation: Vec3::new(-0.085, 1.84, 0.20),
+                        scale: Vec3::new(0.09, 0.016, 0.03),
+                        ..default()
+                    },
+                ))
+                .id();
+            brow_r = root
+                .spawn((
+                    Mesh3d(cuboid.clone()),
+                    MeshMaterial3d(brow_mat),
+                    Transform {
+                        translation: Vec3::new(0.085, 1.84, 0.20),
+                        scale: Vec3::new(0.09, 0.016, 0.03),
+                        ..default()
+                    },
+                ))
+                .id();
+            mouth = root
+                .spawn((
+                    Mesh3d(cuboid.clone()),
+                    MeshMaterial3d(mouth_mat),
+                    Transform {
+                        translation: Vec3::new(0.0, 1.62, 0.205),
+                        scale: Vec3::new(0.08, 0.022, 0.025),
+                        ..default()
+                    },
+                ))
+                .id();
+            blush_l = root
+                .spawn((
+                    Mesh3d(sphere.clone()),
+                    MeshMaterial3d(blush_mat.clone()),
+                    Transform {
+                        translation: Vec3::new(-0.145, 1.66, 0.155),
+                        scale: Vec3::splat(0.001),
+                        ..default()
+                    },
+                ))
+                .id();
+            blush_r = root
+                .spawn((
+                    Mesh3d(sphere.clone()),
+                    MeshMaterial3d(blush_mat),
+                    Transform {
+                        translation: Vec3::new(0.145, 1.66, 0.155),
+                        scale: Vec3::splat(0.001),
+                        ..default()
+                    },
+                ))
+                .id();
+            spawn_jersey_number(
+                root,
+                &cuboid,
+                &number_mat,
+                jersey_number(id, slot),
+            );
             spawn_hair(root, p.hair, meshes, &cuboid, &sphere, &hair_mat);
             l_arm = root
                 .spawn((
@@ -322,14 +441,25 @@ pub fn spawn_player(
         })
         .id();
 
-    commands.entity(root).insert(Rig {
-        torso: torso_id,
-        head: head_id,
-        l_arm,
-        r_arm,
-        l_leg,
-        r_leg,
-    });
+    commands.entity(root).insert((
+        Rig {
+            torso: torso_id,
+            head: head_id,
+            l_arm,
+            r_arm,
+            l_leg,
+            r_leg,
+        },
+        FaceRig {
+            brow_l,
+            brow_r,
+            mouth,
+            iris_l,
+            iris_r,
+            blush_l,
+            blush_r,
+        },
+    ));
 
     if human {
         commands.entity(root).insert(Controlled);
@@ -337,6 +467,92 @@ pub fn spawn_player(
 
     let _ = PLAYER_RADIUS;
     root
+}
+
+fn jersey_number(id: CharacterId, slot: u8) -> u8 {
+    // Character-based broadcast numbers (slot+1 is the simple fallback).
+    let _ = slot + 1;
+    match id {
+        CharacterId::KaitoFlash => 1,
+        CharacterId::MikaOrbit => 3,
+        CharacterId::JinGravity => 23,
+        CharacterId::ReiWall => 33,
+        CharacterId::YunaSilk => 8,
+        CharacterId::ZeroGhost => 0,
+        CharacterId::LunaEclipse => 11,
+        CharacterId::TaroTitan => 50,
+        CharacterId::AikoPrism => 7,
+        CharacterId::KenjiVolt => 24,
+    }
+}
+
+fn spawn_jersey_number(
+    root: &mut RelatedSpawnerCommands<ChildOf>,
+    cuboid: &Handle<Mesh>,
+    mat: &Handle<StandardMaterial>,
+    number: u8,
+) {
+    if number >= 10 {
+        spawn_digit(root, cuboid, mat, number / 10, Vec3::new(-0.07, 1.20, 0.175));
+        spawn_digit(root, cuboid, mat, number % 10, Vec3::new(0.07, 1.20, 0.175));
+    } else {
+        spawn_digit(root, cuboid, mat, number, Vec3::new(0.0, 1.20, 0.175));
+    }
+}
+
+fn spawn_digit(
+    root: &mut RelatedSpawnerCommands<ChildOf>,
+    cuboid: &Handle<Mesh>,
+    mat: &Handle<StandardMaterial>,
+    digit: u8,
+    origin: Vec3,
+) {
+    const A: u8 = 1 << 0;
+    const B: u8 = 1 << 1;
+    const C: u8 = 1 << 2;
+    const D: u8 = 1 << 3;
+    const E: u8 = 1 << 4;
+    const F: u8 = 1 << 5;
+    const G: u8 = 1 << 6;
+    let mask = match digit {
+        0 => A | B | C | D | E | F,
+        1 => B | C,
+        2 => A | B | G | E | D,
+        3 => A | B | G | C | D,
+        4 => F | G | B | C,
+        5 => A | F | G | C | D,
+        6 => A | F | G | E | C | D,
+        7 => A | B | C,
+        8 => A | B | C | D | E | F | G,
+        9 => A | B | C | D | F | G,
+        _ => 0,
+    };
+    let w = 0.055;
+    let h = 0.038;
+    let th = 0.016;
+    let dz = 0.02;
+    let segs = [
+        (Vec3::new(0.0, 0.076, 0.0), Vec3::new(w, th, dz)),
+        (Vec3::new(0.03, 0.038, 0.0), Vec3::new(th, h, dz)),
+        (Vec3::new(0.03, -0.038, 0.0), Vec3::new(th, h, dz)),
+        (Vec3::new(0.0, -0.076, 0.0), Vec3::new(w, th, dz)),
+        (Vec3::new(-0.03, -0.038, 0.0), Vec3::new(th, h, dz)),
+        (Vec3::new(-0.03, 0.038, 0.0), Vec3::new(th, h, dz)),
+        (Vec3::new(0.0, 0.0, 0.0), Vec3::new(w, th, dz)),
+    ];
+    for (i, (off, scale)) in segs.iter().enumerate() {
+        if mask & (1 << i) != 0 {
+            root.spawn((
+                Mesh3d(cuboid.clone()),
+                MeshMaterial3d(mat.clone()),
+                Transform {
+                    translation: origin + *off,
+                    scale: *scale,
+                    ..default()
+                },
+            ));
+        }
+    }
 }
 
 fn spawn_hair(
@@ -505,7 +721,7 @@ fn animate_rigs(
         return;
     }
     let dt = time.delta_secs();
-    for (vel, pose, mut clock, rig, stam) in &mut players {
+    for (vel, pose, mut clock, rig, _stam) in &mut players {
         clock.0 += dt;
         let t = clock.0;
         let spd = Vec3::new(vel.0.x, 0.0, vel.0.z).length();
@@ -560,7 +776,60 @@ fn animate_rigs(
                 torso.rotation = Quat::from_rotation_x(0.4);
             }
         }
-        head.translation.y = 1.72 + stam.0 * 0.0;
+        let bob = match *pose {
+            Pose::Idle => (t * 2.4).sin() * 0.012,
+            Pose::Run | Pose::Sprint => pump.sin().abs() * (0.016 + run * 0.01),
+            Pose::Celebrate => (t * 8.0).sin().abs() * 0.03,
+            Pose::Shoot | Pose::Dunk | Pose::Block => 0.01,
+            _ => (t * 3.5).sin() * 0.008,
+        };
+        head.translation.y = 1.72 + bob;
+    }
+}
+
+fn update_face_expr(
+    mut players: Query<(&Pose, &FaceRig, &mut FaceExpr)>,
+    mut xforms: Query<&mut Transform, Without<Player>>,
+) {
+    for (pose, face, mut expr) in &mut players {
+        *expr = match *pose {
+            Pose::Shoot | Pose::Block => FaceExpr::Focus,
+            Pose::Celebrate => FaceExpr::Celebrate,
+            Pose::Stumble => FaceExpr::Pain,
+            Pose::Dunk => FaceExpr::Angry,
+            _ => FaceExpr::Neutral,
+        };
+        let ids = [
+            face.brow_l,
+            face.brow_r,
+            face.mouth,
+            face.iris_l,
+            face.iris_r,
+            face.blush_l,
+            face.blush_r,
+        ];
+        let Ok(mut parts) = xforms.get_many_mut(ids) else {
+            continue;
+        };
+        let [brow_l, brow_r, mouth, iris_l, iris_r, blush_l, blush_r] = &mut parts;
+
+        let (brow_y, brow_z, mouth_sy, iris_s, blush_s) = match *expr {
+            FaceExpr::Neutral => (1.84, 0.0, 0.022, 0.042, 0.001),
+            FaceExpr::Focus => (1.825, 0.22, 0.014, 0.032, 0.001),
+            FaceExpr::Celebrate => (1.855, -0.18, 0.055, 0.048, 0.042),
+            FaceExpr::Angry => (1.818, 0.38, 0.018, 0.056, 0.001),
+            FaceExpr::Pain => (1.848, -0.28, 0.07, 0.028, 0.02),
+        };
+
+        brow_l.translation.y = brow_y;
+        brow_r.translation.y = brow_y;
+        brow_l.rotation = Quat::from_rotation_z(brow_z);
+        brow_r.rotation = Quat::from_rotation_z(-brow_z);
+        mouth.scale.y = mouth_sy;
+        iris_l.scale = Vec3::splat(iris_s);
+        iris_r.scale = Vec3::splat(iris_s);
+        blush_l.scale = Vec3::splat(blush_s);
+        blush_r.scale = Vec3::splat(blush_s);
     }
 }
 

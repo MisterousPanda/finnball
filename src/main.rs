@@ -1,5 +1,6 @@
 mod ai;
 mod arenas;
+mod audio;
 mod ball;
 mod camera;
 mod court;
@@ -50,6 +51,7 @@ fn main() {
             ai::AiPlugin,
             input::InputPlugin,
             fx::FxPlugin,
+            audio::FinnAudioPlugin,
             ui::UiPlugin,
         ))
         .run();
