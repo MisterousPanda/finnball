@@ -1,16 +1,18 @@
 use bevy::prelude::*;
 
-use crate::ball::{Ball, BallSpin, BallState, BallVel, BucketEvent, Hold, spawn_ball};
+use crate::ball::{spawn_ball, Ball, BallSpin, BallState, BallVel, BucketEvent, Hold};
 use crate::camera::GameCam;
 use crate::roster::Side;
 use crate::sim::{
-    BALL_RADIUS, GRAVITY, HOOP_X, PAINT_DEPTH, RIM_HEIGHT, PassKind, ShotType, ballistic_velocity,
-    clamp_to_court, classify_shot, contest_factor, dribble_cadence, flight_time_for_distance,
-    in_paint, meter_accuracy, release_height, release_spin, shot_kind, shot_make_chance,
-    steal_chance,
+    ballistic_velocity, clamp_to_court, classify_shot, contest_factor, dribble_cadence,
+    flight_time_for_distance, in_paint, meter_accuracy, release_height, release_spin, shot_kind,
+    shot_make_chance, steal_chance, PassKind, ShotType, BALL_RADIUS, GRAVITY, HOOP_X, PAINT_DEPTH,
+    RIM_HEIGHT,
 };
 use crate::states::{AppState, GameMode, MatchConfig, Paused};
-use crate::units::{BoxLine, MoveVel, Player, Pose, PoseClock, Ratings, Stamina, spawn_player};
+use crate::units::{
+    spawn_player, BoxLine, Heat, MoveVel, Player, Pose, PoseClock, Ratings, Stamina,
+};
 
 pub struct GameplayPlugin;
 
@@ -29,6 +31,7 @@ impl Plugin for GameplayPlugin {
             .add_message::<StealEvent>()
             .add_message::<ViolationEvent>()
             .add_message::<TipWhistle>()
+            .add_message::<CutSqueak>()
             .add_systems(OnEnter(AppState::Playing), start_match)
             .add_systems(
                 Update,
@@ -158,6 +161,11 @@ pub struct ViolationEvent;
 #[derive(Message, Clone, Copy)]
 pub struct TipWhistle;
 
+#[derive(Message, Clone, Copy)]
+pub struct CutSqueak {
+    pub pos: Vec3,
+}
+
 #[derive(Resource, Default)]
 pub struct LastPass {
     pub passer: Option<Entity>,
@@ -223,7 +231,9 @@ fn start_match(
             human,
             home_spots[i],
         );
-        commands.entity(e).insert(AiBrain { think: i as f32 * 0.2 });
+        commands.entity(e).insert(AiBrain {
+            think: i as f32 * 0.2,
+        });
         if human {
             first_human = Some(e);
         }
@@ -240,7 +250,9 @@ fn start_match(
                 false,
                 away_spots[i],
             );
-            commands.entity(e).insert(AiBrain { think: 0.4 + i as f32 * 0.15 });
+            commands.entity(e).insert(AiBrain {
+                think: 0.4 + i as f32 * 0.15,
+            });
         }
     }
     control.entity = first_human;
@@ -360,7 +372,11 @@ fn reset_to_half(
             Vec3::new(3.1, 1.1, 0.0)
         };
         vel.0 = Vec3::ZERO;
-        st.hold = if holder.is_some() { Hold::Held } else { Hold::Loose };
+        st.hold = if holder.is_some() {
+            Hold::Held
+        } else {
+            Hold::Loose
+        };
         st.holder = holder;
         st.shooter = None;
         st.last_touch = holder;
@@ -377,16 +393,19 @@ fn apply_intents(
     mut meter: ResMut<ShotMeter>,
     control: Res<LiveControl>,
     cam: Query<&Transform, (With<GameCam>, Without<Player>)>,
-    mut q: Query<(
-        Entity,
-        &Player,
-        &Ratings,
-        &mut MoveVel,
-        &mut Transform,
-        &mut Pose,
-        &mut PoseClock,
-        &mut Stamina,
-    ), Without<GameCam>>,
+    mut q: Query<
+        (
+            Entity,
+            &Player,
+            &Ratings,
+            &mut MoveVel,
+            &mut Transform,
+            &mut Pose,
+            &mut PoseClock,
+            &mut Stamina,
+        ),
+        Without<GameCam>,
+    >,
 ) {
     if paused.0 {
         return;
@@ -404,7 +423,10 @@ fn apply_intents(
         if e != ctrl {
             continue;
         }
-        if matches!(*pose, Pose::Shoot | Pose::Dunk | Pose::Pass | Pose::Block | Pose::Stumble) {
+        if matches!(
+            *pose,
+            Pose::Shoot | Pose::Dunk | Pose::Pass | Pose::Block | Pose::Stumble
+        ) {
             continue;
         }
         let stick = intent.move_xz;
@@ -488,7 +510,9 @@ fn follow_dribble(
     // Crossed the floor (phase wrap through π)
     let prev_sin = prev.sin();
     if prev_sin > 0.0 && phase.sin() <= 0.0 {
-        ticks.write(DribbleTickEvent { pos: btf.translation });
+        ticks.write(DribbleTickEvent {
+            pos: btf.translation,
+        });
     }
     let peak = (0.38 + speed * 0.015).clamp(0.28, 0.52);
     let bounce = BALL_RADIUS + (1.0 + phase.cos()) * 0.5 * peak;
@@ -509,7 +533,17 @@ fn pickup_loose_ball(
     mut clock: ResMut<MatchClock>,
     config: Res<MatchConfig>,
     mut ball: Query<(&Transform, &mut BallState, &BallVel), (With<Ball>, Without<Player>)>,
-    mut players: Query<(Entity, &Transform, &Ratings, &Player, &mut BoxLine), Without<Ball>>,
+    mut players: Query<
+        (
+            Entity,
+            &Transform,
+            &Ratings,
+            &Player,
+            &mut BoxLine,
+            &mut Heat,
+        ),
+        Without<Ball>,
+    >,
 ) {
     if paused.0 {
         return;
@@ -527,7 +561,7 @@ fn pickup_loose_ball(
         return;
     }
     let mut best: Option<(Entity, f32)> = None;
-    for (e, tf, r, _p, _) in &players {
+    for (e, tf, r, _p, _, _) in &players {
         let d = tf.translation.distance(btf.translation);
         let reach = 0.85 + r.height * 0.12 + r.rebound / 220.0;
         if d < reach {
@@ -539,6 +573,13 @@ fn pickup_loose_ball(
     }
     if let Some((e, _)) = best {
         let rebound = state.shooter.is_some() || state.rim_hits > 0;
+        if let Some(shooter) = state.shooter {
+            if shooter != e {
+                if let Ok((_, _, _, _, _, mut heat)) = players.get_mut(shooter) {
+                    heat.streak = 0;
+                }
+            }
+        }
         state.hold = Hold::Held;
         state.holder = Some(e);
         state.last_touch = Some(e);
@@ -546,7 +587,7 @@ fn pickup_loose_ball(
         state.rim_hits = 0;
         clock.shot = config.shot_clock;
         if rebound {
-            if let Ok((_, _, _, _, mut boxl)) = players.get_mut(e) {
+            if let Ok((_, _, _, _, mut boxl, _)) = players.get_mut(e) {
                 boxl.reb += 1;
             }
             last_pass.passer = None;
@@ -571,18 +612,25 @@ fn shoot_and_pass(
     control: Res<LiveControl>,
     mut plays: MessageWriter<PlayCall>,
     mut last_pass: ResMut<LastPass>,
-    mut ball: Query<(&mut Transform, &mut BallVel, &mut BallSpin, &mut BallState), (With<Ball>, Without<Player>)>,
-    mut players: Query<(
-        Entity,
-        &Player,
-        &Ratings,
-        &Transform,
-        &MoveVel,
-        &mut Pose,
-        &mut PoseClock,
-        &mut BoxLine,
-        &Stamina,
-    ), Without<Ball>>,
+    mut ball: Query<
+        (&mut Transform, &mut BallVel, &mut BallSpin, &mut BallState),
+        (With<Ball>, Without<Player>),
+    >,
+    mut players: Query<
+        (
+            Entity,
+            &Player,
+            &Ratings,
+            &Transform,
+            &MoveVel,
+            &mut Pose,
+            &mut PoseClock,
+            &mut BoxLine,
+            &Stamina,
+            &Heat,
+        ),
+        Without<Ball>,
+    >,
 ) {
     if paused.0 {
         intent.shoot_released = false;
@@ -599,9 +647,22 @@ fn shoot_and_pass(
     };
 
     // Snapshot needed data to avoid double borrows
-    let roster: Vec<(Entity, Side, Vec3, Vec3, f32, f32, f32, f32, f32, f32, bool)> = players
+    let roster: Vec<(
+        Entity,
+        Side,
+        Vec3,
+        Vec3,
+        f32,
+        f32,
+        f32,
+        f32,
+        f32,
+        f32,
+        bool,
+        u8,
+    )> = players
         .iter()
-        .map(|(e, p, r, t, v, _, _, _, s)| {
+        .map(|(e, p, r, t, v, _, _, _, s, heat)| {
             (
                 e,
                 p.side,
@@ -614,6 +675,7 @@ fn shoot_and_pass(
                 r.block,
                 s.0,
                 p.human,
+                heat.streak,
             )
         })
         .collect();
@@ -622,7 +684,7 @@ fn shoot_and_pass(
         intent.shoot_released = false;
         return;
     };
-    let (me_e, me_side, me_pos, me_vel, three, mid, dunk, pass, _blk, stam, _) = me;
+    let (me_e, me_side, me_pos, me_vel, three, mid, dunk, pass, _blk, stam, _, streak) = me;
 
     if intent.special && state.hold == Hold::Held && state.holder == Some(ctrl) {
         intent.shoot_released = true;
@@ -637,10 +699,22 @@ fn shoot_and_pass(
                 _ => target.2 + Vec3::Y * 1.4,
             };
             let (flight, grav) = match kind {
-                PassKind::Lob => ((me_pos.distance(dest) / 9.0).clamp(0.45, 0.85), GRAVITY * 0.55),
-                PassKind::Bounce => ((me_pos.distance(dest) / 11.0).clamp(0.28, 0.55), GRAVITY * 0.9),
-                PassKind::Skip => ((me_pos.distance(dest) / 15.0).clamp(0.16, 0.38), GRAVITY * 0.15),
-                PassKind::Chest => ((me_pos.distance(dest) / 13.0).clamp(0.18, 0.5), GRAVITY * 0.28),
+                PassKind::Lob => (
+                    (me_pos.distance(dest) / 9.0).clamp(0.45, 0.85),
+                    GRAVITY * 0.55,
+                ),
+                PassKind::Bounce => (
+                    (me_pos.distance(dest) / 11.0).clamp(0.28, 0.55),
+                    GRAVITY * 0.9,
+                ),
+                PassKind::Skip => (
+                    (me_pos.distance(dest) / 15.0).clamp(0.16, 0.38),
+                    GRAVITY * 0.15,
+                ),
+                PassKind::Chest => (
+                    (me_pos.distance(dest) / 13.0).clamp(0.18, 0.5),
+                    GRAVITY * 0.28,
+                ),
             };
             let v = ballistic_velocity(
                 [btf.translation.x, 1.4, btf.translation.z],
@@ -656,7 +730,7 @@ fn shoot_and_pass(
             last_pass.passer = Some(ctrl);
             last_pass.age = 0.0;
             spin.0 = Vec3::new(0.0, 18.0, 0.0);
-            if let Ok((_, _, _, _, _, mut pose, mut clock, _, _)) = players.get_mut(ctrl) {
+            if let Ok((_, _, _, _, _, mut pose, mut clock, _, _, _)) = players.get_mut(ctrl) {
                 *pose = Pose::Pass;
                 clock.0 = 0.0;
             }
@@ -673,7 +747,11 @@ fn shoot_and_pass(
     }
 
     if intent.shoot_released && state.hold == Hold::Held && state.holder == Some(ctrl) {
-        let hoop_x = if me_side == Side::Home { HOOP_X } else { -HOOP_X };
+        let hoop_x = if me_side == Side::Home {
+            HOOP_X
+        } else {
+            -HOOP_X
+        };
         let hoop = Vec3::new(hoop_x, RIM_HEIGHT, 0.0);
         let dist = me_pos.distance(Vec3::new(hoop_x, me_pos.y, 0.0));
         let in_the_paint = in_paint(me_pos.x, me_pos.z, hoop_x);
@@ -709,13 +787,19 @@ fn shoot_and_pass(
                 GRAVITY,
             );
             bvel.0 = Vec3::new(v[0], v[1], v[2]) + me_vel * 0.15;
-            spin.0 = Vec3::from_array(release_spin(shot, 1.0, hoop.x - me_pos.x, hoop.z - me_pos.z));
+            spin.0 = Vec3::from_array(release_spin(
+                shot,
+                1.0,
+                hoop.x - me_pos.x,
+                hoop.z - me_pos.z,
+            ));
             state.hold = Hold::Shot;
             state.holder = None;
             state.shooter = Some(ctrl);
             state.rim_hits = 0;
             state.release_was_three = false;
-            if let Ok((_, _, _, _, _, mut pose, mut clock, mut boxl, _)) = players.get_mut(ctrl) {
+            if let Ok((_, _, _, _, _, mut pose, mut clock, mut boxl, _, _)) = players.get_mut(ctrl)
+            {
                 *pose = Pose::Dunk;
                 clock.0 = 0.0;
                 boxl.fg_att += 1;
@@ -731,12 +815,21 @@ fn shoot_and_pass(
         }
 
         let is_three = matches!(shot, ShotType::ThreePointer | ShotType::LogoHeave)
-            || matches!(shot_kind(me_pos.x, me_pos.z, hoop_x), crate::sim::ShotKind::Three);
+            || matches!(
+                shot_kind(me_pos.x, me_pos.z, hoop_x),
+                crate::sim::ShotKind::Three
+            );
         let rating = if is_three { three } else { mid };
-        let chance = shot_make_chance(rating, dist, contest, meter_err, stam, is_three);
+        let chance = (shot_make_chance(rating, dist, contest, meter_err, stam, is_three)
+            * crate::sim::heat_make_mult(streak))
+        .min(0.96);
         let mut target = hoop;
         if rng.f32() > chance {
-            target += Vec3::new(rng.range(-0.55, 0.55), rng.range(0.05, 0.45), rng.range(-0.55, 0.55));
+            target += Vec3::new(
+                rng.range(-0.55, 0.55),
+                rng.range(0.05, 0.45),
+                rng.range(-0.55, 0.55),
+            );
         } else {
             target += Vec3::new(rng.range(-0.04, 0.04), 0.02, rng.range(-0.04, 0.04));
         }
@@ -758,13 +851,18 @@ fn shoot_and_pass(
         btf.translation = me_pos + Vec3::Y * height;
         bvel.0 = Vec3::new(v[0], v[1], v[2]) + me_vel * 0.12;
         let quality = (1.0 - meter_err * 1.2).clamp(0.5, 1.1);
-        spin.0 = Vec3::from_array(release_spin(shot, quality, hoop.x - me_pos.x, hoop.z - me_pos.z));
+        spin.0 = Vec3::from_array(release_spin(
+            shot,
+            quality,
+            hoop.x - me_pos.x,
+            hoop.z - me_pos.z,
+        ));
         state.hold = Hold::Shot;
         state.holder = None;
         state.shooter = Some(ctrl);
         state.rim_hits = 0;
         state.release_was_three = is_three;
-        if let Ok((_, _, _, _, _, mut pose, mut clock, mut boxl, _)) = players.get_mut(ctrl) {
+        if let Ok((_, _, _, _, _, mut pose, mut clock, mut boxl, _, _)) = players.get_mut(ctrl) {
             *pose = Pose::Shoot;
             clock.0 = 0.0;
             boxl.fg_att += 1;
@@ -779,11 +877,37 @@ fn shoot_and_pass(
 }
 
 fn nearest_teammate(
-    roster: &[(Entity, Side, Vec3, Vec3, f32, f32, f32, f32, f32, f32, bool)],
+    roster: &[(
+        Entity,
+        Side,
+        Vec3,
+        Vec3,
+        f32,
+        f32,
+        f32,
+        f32,
+        f32,
+        f32,
+        bool,
+        u8,
+    )],
     me: Entity,
     side: Side,
     pos: Vec3,
-) -> Option<(Entity, Side, Vec3, Vec3, f32, f32, f32, f32, f32, f32, bool)> {
+) -> Option<(
+    Entity,
+    Side,
+    Vec3,
+    Vec3,
+    f32,
+    f32,
+    f32,
+    f32,
+    f32,
+    f32,
+    bool,
+    u8,
+)> {
     roster
         .iter()
         .filter(|r| r.0 != me && r.1 == side)
@@ -796,7 +920,20 @@ fn nearest_teammate(
 }
 
 fn nearest_contest(
-    roster: &[(Entity, Side, Vec3, Vec3, f32, f32, f32, f32, f32, f32, bool)],
+    roster: &[(
+        Entity,
+        Side,
+        Vec3,
+        Vec3,
+        f32,
+        f32,
+        f32,
+        f32,
+        f32,
+        f32,
+        bool,
+        u8,
+    )],
     me: Entity,
     side: Side,
     pos: Vec3,
@@ -818,7 +955,15 @@ fn steal_attempts(
     mut last_pass: ResMut<LastPass>,
     control: Res<LiveControl>,
     mut ball: Query<&mut BallState, With<Ball>>,
-    mut players: Query<(Entity, &Player, &Ratings, &Transform, &mut Pose, &mut PoseClock, &mut BoxLine)>,
+    mut players: Query<(
+        Entity,
+        &Player,
+        &Ratings,
+        &Transform,
+        &mut Pose,
+        &mut PoseClock,
+        &mut BoxLine,
+    )>,
 ) {
     if paused.0 || !intent.steal {
         intent.steal = false;
@@ -898,7 +1043,19 @@ fn block_attempts(
     mut ticker: ResMut<Ticker>,
     control: Res<LiveControl>,
     mut ball: Query<(&Transform, &mut BallVel, &mut BallState), (With<Ball>, Without<Player>)>,
-    mut players: Query<(Entity, &Player, &Ratings, &Transform, &mut Pose, &mut PoseClock, &mut BoxLine), Without<Ball>>,
+    mut players: Query<
+        (
+            Entity,
+            &Player,
+            &Ratings,
+            &Transform,
+            &mut Pose,
+            &mut PoseClock,
+            &mut BoxLine,
+        ),
+        Without<Ball>,
+    >,
+    mut heats: Query<&mut Heat>,
 ) {
     if paused.0 || !intent.block {
         intent.block = false;
@@ -929,6 +1086,11 @@ fn block_attempts(
     if window && d < 2.2 && rng.f32() < chance {
         bvel.0 = Vec3::new(-bvel.0.x * 0.35, bvel.0.y.abs() * 0.2, -bvel.0.z * 0.35)
             + Vec3::new(rng.range(-2.0, 2.0), 1.2, rng.range(-2.0, 2.0));
+        if let Some(shooter) = state.shooter {
+            if let Ok(mut heat) = heats.get_mut(shooter) {
+                heat.streak = 0;
+            }
+        }
         state.hold = Hold::Loose;
         state.shooter = None;
         boxl.blk += 1;
@@ -944,16 +1106,31 @@ fn handle_buckets(
     mut clock: ResMut<MatchClock>,
     mut last_pass: ResMut<LastPass>,
     config: Res<MatchConfig>,
-    mut players: Query<(Entity, &Player, &Transform, &mut Pose, &mut PoseClock, &mut BoxLine)>,
+    mut players: Query<(
+        Entity,
+        &Player,
+        &Transform,
+        &mut Pose,
+        &mut PoseClock,
+        &mut BoxLine,
+        &mut Heat,
+    )>,
     mut next: ResMut<NextState<AppState>>,
 ) {
     for ev in buckets.read() {
         let mut pts = 2;
         let mut side = Side::Home;
+        let mut fire_line = false;
         if let Some(shooter) = ev.shooter {
-            if let Ok((_, p, tf, mut pose, mut clockp, mut boxl)) = players.get_mut(shooter) {
+            if let Ok((_, p, tf, mut pose, mut clockp, mut boxl, mut heat)) =
+                players.get_mut(shooter)
+            {
                 side = p.side;
-                let hoop_x = if p.side == Side::Home { HOOP_X } else { -HOOP_X };
+                let hoop_x = if p.side == Side::Home {
+                    HOOP_X
+                } else {
+                    -HOOP_X
+                };
                 pts = if ev.dunk {
                     2
                 } else if ev.is_three {
@@ -964,13 +1141,15 @@ fn handle_buckets(
                 let _ = (tf, hoop_x);
                 boxl.pts += pts;
                 boxl.fg_made += 1;
+                heat.streak = heat.streak.saturating_add(1).min(8);
+                fire_line = heat.on_fire();
                 *pose = Pose::Celebrate;
                 clockp.0 = 0.0;
             }
             if last_pass.age < 3.2 {
                 if let Some(passer) = last_pass.passer {
                     if Some(passer) != ev.shooter {
-                        if let Ok((_, p, _, _, _, mut boxl)) = players.get_mut(passer) {
+                        if let Ok((_, p, _, _, _, mut boxl, _)) = players.get_mut(passer) {
                             if p.side == side {
                                 boxl.ast += 1;
                             }
@@ -992,10 +1171,16 @@ fn handle_buckets(
                 if side == Side::Home { "FOX" } else { "CRN" },
                 pts
             )
+        } else if fire_line {
+            format!("ON FIRE +{}  |  {}-{}", pts, score.home, score.away)
         } else {
             format!(
                 "{} BUCKET +{}  |  {}-{}",
-                if side == Side::Home { "NEON FOXES" } else { "SHADOW CRANES" },
+                if side == Side::Home {
+                    "NEON FOXES"
+                } else {
+                    "SHADOW CRANES"
+                },
                 pts,
                 score.home,
                 score.away
@@ -1039,7 +1224,11 @@ fn inbound_after_score(
         let mut inbounder = None;
         for (e, p, mut tf) in &mut players {
             if p.side == inbound_side {
-                let baseline = if inbound_side == Side::Away { 12.4 } else { -12.4 };
+                let baseline = if inbound_side == Side::Away {
+                    12.4
+                } else {
+                    -12.4
+                };
                 let z = (p.slot as f32 - 1.0) * 2.4;
                 tf.translation = Vec3::new(baseline, 0.0, z);
                 if p.slot == 0 {
@@ -1051,7 +1240,11 @@ fn inbound_after_score(
             }
         }
         if let Ok((mut tf, mut vel, mut st)) = ball.single_mut() {
-            let x = if inbound_side == Side::Away { 12.1 } else { -12.1 };
+            let x = if inbound_side == Side::Away {
+                12.1
+            } else {
+                -12.1
+            };
             tf.translation = Vec3::new(x, 1.1, 0.0);
             vel.0 = Vec3::ZERO;
             st.hold = if inbounder.is_some() {

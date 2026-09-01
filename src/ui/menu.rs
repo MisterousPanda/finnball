@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::states::{AppState, GameMode, MatchConfig};
-use crate::theme::{CYAN, GOLD, MAGENTA, MUTED, PANEL, TEXT, button_node, title_font};
+use crate::theme::{button_node, title_font, CYAN, GOLD, MAGENTA, MUTED, PANEL, TEXT};
 use crate::ui::MenuBtn;
 
 pub struct MenuPlugin;
@@ -32,11 +32,7 @@ fn setup(mut commands: Commands) {
             justify_content: JustifyContent::SpaceBetween,
             ..default()
         },
-        children![
-            top_bar(),
-            center_stack(),
-            footer(),
-        ],
+        children![top_bar(), center_stack(), footer(),],
     ));
 }
 
@@ -73,11 +69,7 @@ fn center_stack() -> impl Bundle {
             ..default()
         },
         children![
-            (
-                Text::new("FINNBALL"),
-                title_font(84.0),
-                TextColor(CYAN),
-            ),
+            (Text::new("FINNBALL"), title_font(84.0), TextColor(CYAN),),
             (
                 Text::new("TOON PHYSICS. ANIME HEART. ESPORTS FRAME."),
                 title_font(18.0),
@@ -116,7 +108,7 @@ fn footer() -> impl Bundle {
         },
         children![
             (
-                Text::new("WASD MOVE  •  SPACE SHOOT  •  E PASS  •  Q STEAL  •  F DUNK  •  V CAM  •  TAB SWITCH"),
+                Text::new("WASD / STICK  •  SPACE / A SHOOT  •  E / X PASS  •  Q / B STEAL  •  F / Y DUNK  •  LT SPRINT"),
                 title_font(13.0),
                 TextColor(MUTED),
             ),

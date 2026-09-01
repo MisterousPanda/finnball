@@ -2,7 +2,7 @@ use bevy::audio::{AudioPlayer, AudioSink, AudioSinkPlayback, PlaybackSettings, V
 use bevy::prelude::*;
 
 use crate::ball::{BackboardHitEvent, BucketEvent, FloorBounceEvent, RimHitEvent};
-use crate::gameplay::{DribbleTickEvent, StealEvent, TipWhistle, ViolationEvent};
+use crate::gameplay::{CutSqueak, DribbleTickEvent, StealEvent, TipWhistle, ViolationEvent};
 use crate::states::{AppState, Paused};
 
 pub struct FinnAudioPlugin;
@@ -21,6 +21,7 @@ impl Plugin for FinnAudioPlugin {
                     play_bucket,
                     play_collisions,
                     play_dribble,
+                    play_cuts,
                     play_game_events,
                     play_tip_whistle,
                     play_ui_clicks,
@@ -121,6 +122,7 @@ fn preload(mut commands: Commands, assets: Res<AssetServer>) {
 fn unlock_on_input(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
+    pads: Query<&Gamepad>,
     mut gate: ResMut<AudioGate>,
 ) {
     if gate.unlocked {
@@ -128,11 +130,21 @@ fn unlock_on_input(
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
+        let _ = (keys, mouse, pads);
         gate.unlocked = true;
         return;
     }
-    if keys.get_just_pressed().next().is_some() || mouse.get_just_pressed().next().is_some() {
-        gate.unlocked = true;
+    #[cfg(target_arch = "wasm32")]
+    {
+        let pad = pads
+            .iter()
+            .any(|p| p.get_just_pressed().next().is_some() || p.left_stick().length() > 0.35);
+        if keys.get_just_pressed().next().is_some()
+            || mouse.get_just_pressed().next().is_some()
+            || pad
+        {
+            gate.unlocked = true;
+        }
     }
 }
 
@@ -275,6 +287,27 @@ fn play_dribble(
         }
         *cool = 0.07;
         play_one(&mut commands, sounds.dribble.clone(), mix.sfx * 0.55);
+    }
+}
+
+fn play_cuts(
+    mut commands: Commands,
+    sounds: Option<Res<Sounds>>,
+    mix: Res<AudioMix>,
+    mut cuts: MessageReader<CutSqueak>,
+    mut cool: Local<f32>,
+    time: Res<Time>,
+) {
+    let Some(sounds) = sounds else {
+        return;
+    };
+    *cool = (*cool - time.delta_secs()).max(0.0);
+    for _ in cuts.read() {
+        if *cool > 0.0 {
+            continue;
+        }
+        *cool = 0.16;
+        play_one(&mut commands, sounds.squeak.clone(), mix.sfx * 0.52);
     }
 }
 

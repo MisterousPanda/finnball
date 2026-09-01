@@ -48,6 +48,7 @@ struct JuiceMeshes {
     capsule: Handle<Mesh>,
     trail_mat: Handle<StandardMaterial>,
     ghost_mat: Handle<StandardMaterial>,
+    fire_mat: Handle<StandardMaterial>,
 }
 
 #[derive(Component)]
@@ -77,6 +78,13 @@ fn setup_juice_assets(
         ghost_mat: materials.add(StandardMaterial {
             base_color: Color::srgba(0.65, 0.9, 1.0, 0.32),
             emissive: LinearRgba::new(0.25, 0.45, 0.7, 1.0),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        }),
+        fire_mat: materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.42, 0.08, 0.38),
+            emissive: LinearRgba::new(1.4, 0.35, 0.04, 1.0),
             unlit: true,
             alpha_mode: AlphaMode::Blend,
             ..default()
@@ -171,13 +179,15 @@ fn spawn_afterimages(
     paused: Res<Paused>,
     assets: Res<JuiceMeshes>,
     mut clock: ResMut<JuiceClock>,
-    players: Query<(&Transform, &Pose), With<Player>>,
+    players: Query<(&Transform, &Pose, &crate::units::Heat), With<Player>>,
 ) {
     if paused.0 {
         return;
     }
-    let sprinting = players.iter().any(|(_, pose)| *pose == Pose::Sprint);
-    if !sprinting {
+    let hot = players.iter().any(|(_, pose, heat)| {
+        *pose == Pose::Sprint || (heat.on_fire() && matches!(*pose, Pose::Run | Pose::Sprint))
+    });
+    if !hot {
         return;
     }
     clock.after += time.delta_secs();
@@ -185,14 +195,21 @@ fn spawn_afterimages(
         return;
     }
     clock.after = 0.0;
-    for (tf, pose) in &players {
-        if *pose != Pose::Sprint {
+    for (tf, pose, heat) in &players {
+        let fire = heat.on_fire() && matches!(*pose, Pose::Run | Pose::Sprint | Pose::Shoot);
+        if *pose != Pose::Sprint && !fire {
             continue;
         }
         commands.spawn((
-            FadeTrail { life: 0.15 },
+            FadeTrail {
+                life: if fire { 0.22 } else { 0.15 },
+            },
             Mesh3d(assets.capsule.clone()),
-            MeshMaterial3d(assets.ghost_mat.clone()),
+            MeshMaterial3d(if fire {
+                assets.fire_mat.clone()
+            } else {
+                assets.ghost_mat.clone()
+            }),
             Transform {
                 translation: tf.translation + Vec3::Y * 0.95,
                 rotation: tf.rotation,

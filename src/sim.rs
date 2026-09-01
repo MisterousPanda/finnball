@@ -71,12 +71,7 @@ pub fn points_for(kind: ShotKind) -> u32 {
 }
 
 /// Ballistic launch velocity to reach a target in `flight` seconds under gravity.
-pub fn ballistic_velocity(
-    from: [f32; 3],
-    to: [f32; 3],
-    flight: f32,
-    gravity: f32,
-) -> [f32; 3] {
+pub fn ballistic_velocity(from: [f32; 3], to: [f32; 3], flight: f32, gravity: f32) -> [f32; 3] {
     let t = flight.max(0.18);
     [
         (to[0] - from[0]) / t,
@@ -106,6 +101,29 @@ pub fn shot_make_chance(
     (0.18 + 0.74 * skill * range_term * open * meter * gas).clamp(0.04, 0.92)
 }
 
+/// Consecutive makes: 3+ is ON FIRE. Applied after `shot_make_chance`.
+pub fn heat_make_mult(streak: u8) -> f32 {
+    if streak >= 3 {
+        1.18
+    } else {
+        1.0
+    }
+}
+
+/// AI never heaves from the logo unless the shot clock is dying.
+pub fn ai_wants_shot(
+    dist: f32,
+    open: bool,
+    rating: f32,
+    shot_clock: f32,
+    close_range: bool,
+) -> bool {
+    if dist >= 9.5 {
+        return shot_clock < 8.0;
+    }
+    (open && rating > 62.0) || shot_clock < 5.0 || close_range
+}
+
 pub fn steal_chance(steal_rating: f32, handle_rating: f32, distance: f32) -> f32 {
     let reach = (1.15 - distance * 1.8).clamp(0.0, 1.0);
     let mismatch = ((steal_rating - handle_rating) / 100.0 + 0.5).clamp(0.15, 0.9);
@@ -125,11 +143,7 @@ pub fn flight_time_for_distance(distance: f32) -> f32 {
 }
 
 /// Rim catch: ball must be coming down, near rim center, and inside the cylinder.
-pub fn rim_score_window(
-    ball: [f32; 3],
-    vel_y: f32,
-    hoop: [f32; 3],
-) -> bool {
+pub fn rim_score_window(ball: [f32; 3], vel_y: f32, hoop: [f32; 3]) -> bool {
     if vel_y > 0.4 {
         return false;
     }
@@ -415,7 +429,11 @@ mod tests {
         for _ in 0..200 {
             vel[1] -= GRAVITY * dt;
             prev = pos;
-            pos = [pos[0] + vel[0] * dt, pos[1] + vel[1] * dt, pos[2] + vel[2] * dt];
+            pos = [
+                pos[0] + vel[0] * dt,
+                pos[1] + vel[1] * dt,
+                pos[2] + vel[2] * dt,
+            ];
             if cylinder_score(prev, pos, vel[1], hoop) {
                 scored = true;
                 break;
@@ -425,6 +443,23 @@ mod tests {
             }
         }
         assert!(scored, "green make on the solved ballistic must score");
+    }
+
+    #[test]
+    fn on_fire_boosts_makes() {
+        assert_eq!(heat_make_mult(0), 1.0);
+        assert_eq!(heat_make_mult(2), 1.0);
+        assert!((heat_make_mult(3) - 1.18).abs() < f32::EPSILON);
+        let base = shot_make_chance(80.0, 6.0, 0.1, 0.05, 0.9, false);
+        assert!(base * heat_make_mult(3) > base);
+    }
+
+    #[test]
+    fn ai_does_not_heave_from_logo_early() {
+        assert!(!ai_wants_shot(12.0, true, 90.0, 18.0, false));
+        assert!(ai_wants_shot(12.0, true, 90.0, 4.0, false));
+        assert!(ai_wants_shot(3.0, false, 50.0, 20.0, true));
+        assert!(ai_wants_shot(7.0, true, 70.0, 20.0, false));
     }
 
     #[test]

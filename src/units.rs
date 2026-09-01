@@ -3,7 +3,7 @@ use bevy::ecs::relationship::RelatedSpawnerCommands;
 use bevy::prelude::*;
 
 use crate::roster::{CharacterId, CharacterProfile, HairStyle, Side};
-use crate::sim::{PLAYER_RADIUS, speed_from_rating};
+use crate::sim::{speed_from_rating, PLAYER_RADIUS};
 use crate::states::Paused;
 
 pub struct UnitsPlugin;
@@ -12,7 +12,14 @@ impl Plugin for UnitsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (face_velocity, animate_rigs, update_face_expr, stamina_regen)
+            (
+                face_velocity,
+                animate_rigs,
+                update_face_expr,
+                stamina_regen,
+                separate_players,
+                detect_cuts,
+            )
                 .run_if(in_state(crate::states::AppState::Playing)),
         );
     }
@@ -104,6 +111,17 @@ pub struct FaceRig {
     pub iris_r: Entity,
     pub blush_l: Entity,
     pub blush_r: Entity,
+}
+
+#[derive(Component, Default, Clone, Copy)]
+pub struct Heat {
+    pub streak: u8,
+}
+
+impl Heat {
+    pub fn on_fire(self) -> bool {
+        self.streak >= 3
+    }
 }
 
 #[derive(Component, Clone, Copy, PartialEq, Eq, Default)]
@@ -251,6 +269,7 @@ pub fn spawn_player(
             Pose::Idle,
             PoseClock(0.0),
             FaceExpr::Neutral,
+            Heat::default(),
             BoxLine::default(),
             Transform::from_translation(pos).with_scale(Vec3::splat(scale)),
             Visibility::default(),
@@ -385,15 +404,10 @@ pub fn spawn_player(
                             },
                         ))
                         .id();
+                    spawn_hair(head, p.hair, &cuboid, &sphere, &hair_mat);
                 })
                 .id();
-            spawn_jersey_number(
-                root,
-                &cuboid,
-                &number_mat,
-                jersey_number(id, slot),
-            );
-            spawn_hair(root, p.hair, meshes, &cuboid, &sphere, &hair_mat);
+            spawn_jersey_number(root, &cuboid, &number_mat, jersey_number(id, slot));
             l_arm = root
                 .spawn((
                     Mesh3d(capsule.clone()),
@@ -495,7 +509,13 @@ fn spawn_jersey_number(
     number: u8,
 ) {
     if number >= 10 {
-        spawn_digit(root, cuboid, mat, number / 10, Vec3::new(-0.07, 1.20, 0.175));
+        spawn_digit(
+            root,
+            cuboid,
+            mat,
+            number / 10,
+            Vec3::new(-0.07, 1.20, 0.175),
+        );
         spawn_digit(root, cuboid, mat, number % 10, Vec3::new(0.07, 1.20, 0.175));
     } else {
         spawn_digit(root, cuboid, mat, number, Vec3::new(0.0, 1.20, 0.175));
@@ -557,10 +577,17 @@ fn spawn_digit(
     }
 }
 
+fn hp(p: Vec3) -> Vec3 {
+    (p - Vec3::new(0.0, 1.72, 0.0)) / 0.24
+}
+
+fn hs(s: Vec3) -> Vec3 {
+    s / 0.24
+}
+
 fn spawn_hair(
-    root: &mut RelatedSpawnerCommands<ChildOf>,
+    head: &mut RelatedSpawnerCommands<ChildOf>,
     style: HairStyle,
-    _meshes: &Assets<Mesh>,
     cuboid: &Handle<Mesh>,
     sphere: &Handle<Mesh>,
     hair: &Handle<StandardMaterial>,
@@ -570,133 +597,195 @@ fn spawn_hair(
         HairStyle::Spikes => {
             for i in 0..5 {
                 let a = -0.3 + i as f32 * 0.15;
-                root.spawn((
+                head.spawn((
                     Mesh3d(cuboid.clone()),
                     MeshMaterial3d(hair.clone()),
                     Transform {
-                        translation: Vec3::new(a, y + 0.08, -0.02),
+                        translation: hp(Vec3::new(a, y + 0.08, -0.02)),
                         rotation: Quat::from_rotation_z(a * 0.8) * Quat::from_rotation_x(-0.4),
-                        scale: Vec3::new(0.08, 0.28, 0.08),
+                        scale: hs(Vec3::new(0.08, 0.28, 0.08)),
                     },
                 ));
             }
         }
         HairStyle::TwinTails => {
             for s in [-1.0, 1.0] {
-                root.spawn((
+                head.spawn((
                     Mesh3d(sphere.clone()),
                     MeshMaterial3d(hair.clone()),
                     Transform {
-                        translation: Vec3::new(s * 0.22, 1.7, -0.05),
-                        scale: Vec3::new(0.12, 0.35, 0.12),
+                        translation: hp(Vec3::new(s * 0.22, 1.7, -0.05)),
+                        scale: hs(Vec3::new(0.12, 0.35, 0.12)),
                         ..default()
                     },
                 ));
             }
         }
         HairStyle::Buzz => {
-            root.spawn((
+            head.spawn((
                 Mesh3d(sphere.clone()),
                 MeshMaterial3d(hair.clone()),
                 Transform {
-                    translation: Vec3::new(0.0, 1.8, 0.0),
-                    scale: Vec3::new(0.26, 0.12, 0.26),
+                    translation: hp(Vec3::new(0.0, 1.8, 0.0)),
+                    scale: hs(Vec3::new(0.26, 0.12, 0.26)),
                     ..default()
                 },
             ));
         }
         HairStyle::Long => {
-            root.spawn((
+            head.spawn((
                 Mesh3d(cuboid.clone()),
                 MeshMaterial3d(hair.clone()),
                 Transform {
-                    translation: Vec3::new(0.0, 1.5, -0.12),
-                    scale: Vec3::new(0.28, 0.7, 0.12),
+                    translation: hp(Vec3::new(0.0, 1.5, -0.12)),
+                    scale: hs(Vec3::new(0.28, 0.7, 0.12)),
                     ..default()
                 },
             ));
         }
         HairStyle::Ponytail => {
-            root.spawn((
+            head.spawn((
                 Mesh3d(sphere.clone()),
                 MeshMaterial3d(hair.clone()),
                 Transform {
-                    translation: Vec3::new(0.0, 1.82, 0.0),
-                    scale: Vec3::new(0.26, 0.16, 0.26),
+                    translation: hp(Vec3::new(0.0, 1.82, 0.0)),
+                    scale: hs(Vec3::new(0.26, 0.16, 0.26)),
                     ..default()
                 },
             ));
-            root.spawn((
+            head.spawn((
                 Mesh3d(cuboid.clone()),
                 MeshMaterial3d(hair.clone()),
                 Transform {
-                    translation: Vec3::new(0.0, 1.55, -0.2),
+                    translation: hp(Vec3::new(0.0, 1.55, -0.2)),
                     rotation: Quat::from_rotation_x(0.5),
-                    scale: Vec3::new(0.1, 0.45, 0.1),
+                    scale: hs(Vec3::new(0.1, 0.45, 0.1)),
                 },
             ));
         }
         HairStyle::Messy => {
-            root.spawn((
+            head.spawn((
                 Mesh3d(sphere.clone()),
                 MeshMaterial3d(hair.clone()),
                 Transform {
-                    translation: Vec3::new(-0.06, 1.84, 0.02),
-                    scale: Vec3::new(0.28, 0.2, 0.24),
+                    translation: hp(Vec3::new(-0.06, 1.84, 0.02)),
+                    scale: hs(Vec3::new(0.28, 0.2, 0.24)),
                     ..default()
                 },
             ));
         }
         HairStyle::Bob => {
-            root.spawn((
+            head.spawn((
                 Mesh3d(sphere.clone()),
                 MeshMaterial3d(hair.clone()),
                 Transform {
-                    translation: Vec3::new(0.0, 1.78, 0.0),
-                    scale: Vec3::new(0.3, 0.22, 0.28),
+                    translation: hp(Vec3::new(0.0, 1.78, 0.0)),
+                    scale: hs(Vec3::new(0.3, 0.22, 0.28)),
                     ..default()
                 },
             ));
         }
         HairStyle::Bandana => {
-            root.spawn((
+            head.spawn((
                 Mesh3d(cuboid.clone()),
                 MeshMaterial3d(hair.clone()),
                 Transform {
-                    translation: Vec3::new(0.0, 1.82, 0.02),
-                    scale: Vec3::new(0.32, 0.08, 0.28),
+                    translation: hp(Vec3::new(0.0, 1.82, 0.02)),
+                    scale: hs(Vec3::new(0.32, 0.08, 0.28)),
                     ..default()
                 },
             ));
         }
         HairStyle::Drills => {
             for s in [-1.0, 1.0] {
-                root.spawn((
+                head.spawn((
                     Mesh3d(cuboid.clone()),
                     MeshMaterial3d(hair.clone()),
                     Transform {
-                        translation: Vec3::new(s * 0.28, 1.55, 0.0),
+                        translation: hp(Vec3::new(s * 0.28, 1.55, 0.0)),
                         rotation: Quat::from_rotation_z(-s * 0.35),
-                        scale: Vec3::new(0.14, 0.55, 0.14),
+                        scale: hs(Vec3::new(0.14, 0.55, 0.14)),
                     },
                 ));
             }
         }
         HairStyle::Lightning => {
-            root.spawn((
+            head.spawn((
                 Mesh3d(cuboid.clone()),
                 MeshMaterial3d(hair.clone()),
                 Transform {
-                    translation: Vec3::new(0.1, 1.98, 0.0),
+                    translation: hp(Vec3::new(0.1, 1.98, 0.0)),
                     rotation: Quat::from_rotation_z(-0.45),
-                    scale: Vec3::new(0.1, 0.42, 0.08),
+                    scale: hs(Vec3::new(0.1, 0.42, 0.08)),
                 },
             ));
         }
     }
 }
 
-fn face_velocity(paused: Res<Paused>, mut q: Query<(&MoveVel, &mut Transform, &Pose), With<Player>>) {
+fn separate_players(paused: Res<Paused>, mut q: Query<(Entity, &mut Transform), With<Player>>) {
+    if paused.0 {
+        return;
+    }
+    let mut pts: Vec<(Entity, Vec3)> = q.iter().map(|(e, t)| (e, t.translation)).collect();
+    let min = PLAYER_RADIUS * 2.05;
+    for i in 0..pts.len() {
+        for j in (i + 1)..pts.len() {
+            let a = pts[i].1;
+            let b = pts[j].1;
+            let mut d = Vec3::new(a.x - b.x, 0.0, a.z - b.z);
+            let len = d.length();
+            if len < 0.001 {
+                d = Vec3::new(0.12, 0.0, 0.08);
+            }
+            if len < min {
+                let push = d.normalize_or_zero() * ((min - len.max(0.001)) * 0.5);
+                pts[i].1 += push;
+                pts[j].1 -= push;
+            }
+        }
+    }
+    for (e, mut tf) in &mut q {
+        if let Some((_, p)) = pts.iter().find(|(id, _)| *id == e) {
+            let (x, z) = crate::sim::clamp_to_court(p.x, p.z, 0.55);
+            tf.translation.x = x;
+            tf.translation.z = z;
+        }
+    }
+}
+
+fn detect_cuts(
+    paused: Res<Paused>,
+    mut prev: Local<std::collections::HashMap<Entity, Vec3>>,
+    q: Query<(Entity, &Transform, &MoveVel), With<Player>>,
+    mut cuts: MessageWriter<crate::gameplay::CutSqueak>,
+) {
+    if paused.0 {
+        return;
+    }
+    for (e, tf, vel) in &q {
+        let now = Vec3::new(vel.0.x, 0.0, vel.0.z);
+        if let Some(old) = prev.get(&e).copied() {
+            let a = old.length();
+            let b = now.length();
+            if a > 3.4 && b > 3.4 {
+                let dot = old.normalize_or_zero().dot(now.normalize_or_zero());
+                if dot < 0.12 {
+                    cuts.write(crate::gameplay::CutSqueak {
+                        pos: tf.translation,
+                    });
+                }
+            }
+        }
+        prev.insert(e, now);
+    }
+    prev.retain(|e, _| q.get(*e).is_ok());
+}
+
+fn face_velocity(
+    paused: Res<Paused>,
+    mut q: Query<(&MoveVel, &mut Transform, &Pose), With<Player>>,
+) {
     if paused.0 {
         return;
     }
@@ -729,7 +818,9 @@ fn animate_rigs(
         let spd = Vec3::new(vel.0.x, 0.0, vel.0.z).length();
         let run = (spd / 6.0).clamp(0.0, 1.6);
         let pump = t * (8.0 + run * 6.0);
-        let ids = [rig.torso, rig.head, rig.l_arm, rig.r_arm, rig.l_leg, rig.r_leg];
+        let ids = [
+            rig.torso, rig.head, rig.l_arm, rig.r_arm, rig.l_leg, rig.r_leg,
+        ];
         let Ok(mut parts) = xforms.get_many_mut(ids) else {
             continue;
         };

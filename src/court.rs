@@ -1,26 +1,33 @@
 use bevy::prelude::*;
 
 use crate::arenas::ArenaTheme;
-use crate::sim::{COURT_HALF_LEN, COURT_HALF_WID, HOOP_X, PAINT_DEPTH, PAINT_HALF_WIDTH, RIM_HEIGHT, RIM_RADIUS, THREE_RADIUS};
+use crate::sim::{
+    COURT_HALF_LEN, COURT_HALF_WID, HOOP_X, PAINT_DEPTH, PAINT_HALF_WIDTH, RIM_HEIGHT, RIM_RADIUS,
+    THREE_RADIUS,
+};
 use crate::states::{AppState, MatchConfig};
 
 pub struct CourtPlugin;
 
 impl Plugin for CourtPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::Playing), (cleanup_arenas, spawn_arena).chain())
-            .add_systems(OnEnter(AppState::Splash), spawn_menu_arena)
-            .add_systems(OnEnter(AppState::MainMenu), spawn_menu_arena)
-            .add_systems(OnEnter(AppState::CharacterSelect), spawn_menu_arena)
-            .add_systems(OnEnter(AppState::CourtSelect), spawn_menu_arena)
-            .add_systems(
-                Update,
-                spin_holo.run_if(
-                    in_state(AppState::MainMenu)
-                        .or(in_state(AppState::CharacterSelect))
-                        .or(in_state(AppState::CourtSelect)),
-                ),
-            );
+        app.add_systems(
+            OnEnter(AppState::Playing),
+            (cleanup_arenas, spawn_arena).chain(),
+        )
+        .add_systems(OnEnter(AppState::Splash), spawn_menu_arena)
+        .add_systems(OnEnter(AppState::MainMenu), spawn_menu_arena)
+        .add_systems(OnEnter(AppState::CharacterSelect), spawn_menu_arena)
+        .add_systems(OnEnter(AppState::CourtSelect), spawn_menu_arena)
+        .add_systems(
+            Update,
+            spin_holo.run_if(
+                in_state(AppState::MainMenu)
+                    .or(in_state(AppState::CharacterSelect))
+                    .or(in_state(AppState::CourtSelect)),
+            ),
+        )
+        .add_systems(Update, pulse_nets.run_if(in_state(AppState::Playing)));
     }
 }
 
@@ -38,6 +45,12 @@ struct HoloSpin;
 #[derive(Component)]
 pub struct RimMarker {
     pub home_side: bool,
+}
+
+#[derive(Component)]
+pub struct NetRipple {
+    pub rest_scale: Vec3,
+    pub pulse: f32,
 }
 
 fn cleanup_arenas(mut commands: Commands, q: Query<Entity, With<ArenaRoot>>) {
@@ -184,15 +197,87 @@ fn build_arena(
     ));
 
     // Boundary + center line
-    spawn_line(commands, meshes, &line_mat, 0.0, COURT_HALF_LEN * 2.0, 0.08, COURT_HALF_WID * 2.0);
-    spawn_line(commands, meshes, &line_mat, 0.0, 0.08, COURT_HALF_LEN * 2.0, 0.12);
-    spawn_line(commands, meshes, &line_mat, 0.0, COURT_HALF_LEN * 2.0 + 0.16, 0.1, 0.12);
-    spawn_line(commands, meshes, &line_mat, 0.0, 0.1, 0.12, COURT_HALF_WID * 2.0 + 0.16);
-    spawn_line(commands, meshes, &line_mat, COURT_HALF_LEN, 0.1, 0.12, COURT_HALF_WID * 2.0 + 0.16);
-    spawn_line(commands, meshes, &line_mat, -COURT_HALF_LEN, 0.1, 0.12, COURT_HALF_WID * 2.0 + 0.16);
-    spawn_line(commands, meshes, &line_mat, 0.0, COURT_HALF_LEN * 2.0 + 0.16, 0.1, 0.12);
-    spawn_line(commands, meshes, &line_mat, 0.0, COURT_HALF_WID, COURT_HALF_LEN * 2.0 + 0.16, 0.1);
-    spawn_line(commands, meshes, &line_mat, 0.0, -COURT_HALF_WID, COURT_HALF_LEN * 2.0 + 0.16, 0.1);
+    spawn_line(
+        commands,
+        meshes,
+        &line_mat,
+        0.0,
+        COURT_HALF_LEN * 2.0,
+        0.08,
+        COURT_HALF_WID * 2.0,
+    );
+    spawn_line(
+        commands,
+        meshes,
+        &line_mat,
+        0.0,
+        0.08,
+        COURT_HALF_LEN * 2.0,
+        0.12,
+    );
+    spawn_line(
+        commands,
+        meshes,
+        &line_mat,
+        0.0,
+        COURT_HALF_LEN * 2.0 + 0.16,
+        0.1,
+        0.12,
+    );
+    spawn_line(
+        commands,
+        meshes,
+        &line_mat,
+        0.0,
+        0.1,
+        0.12,
+        COURT_HALF_WID * 2.0 + 0.16,
+    );
+    spawn_line(
+        commands,
+        meshes,
+        &line_mat,
+        COURT_HALF_LEN,
+        0.1,
+        0.12,
+        COURT_HALF_WID * 2.0 + 0.16,
+    );
+    spawn_line(
+        commands,
+        meshes,
+        &line_mat,
+        -COURT_HALF_LEN,
+        0.1,
+        0.12,
+        COURT_HALF_WID * 2.0 + 0.16,
+    );
+    spawn_line(
+        commands,
+        meshes,
+        &line_mat,
+        0.0,
+        COURT_HALF_LEN * 2.0 + 0.16,
+        0.1,
+        0.12,
+    );
+    spawn_line(
+        commands,
+        meshes,
+        &line_mat,
+        0.0,
+        COURT_HALF_WID,
+        COURT_HALF_LEN * 2.0 + 0.16,
+        0.1,
+    );
+    spawn_line(
+        commands,
+        meshes,
+        &line_mat,
+        0.0,
+        -COURT_HALF_WID,
+        COURT_HALF_LEN * 2.0 + 0.16,
+        0.1,
+    );
 
     // Paints
     for sign in [-1.0, 1.0] {
@@ -382,10 +467,15 @@ fn spawn_line(
     // Overload-ish helper: if sx small it's a long z line etc.
     commands.spawn((
         ArenaRoot,
-        Mesh3d(meshes.add(Cuboid::new(sx.max(z_or_len.min(sx + COURT_HALF_LEN * 4.0)), 0.05, sz))),
+        Mesh3d(meshes.add(Cuboid::new(
+            sx.max(z_or_len.min(sx + COURT_HALF_LEN * 4.0)),
+            0.05,
+            sz,
+        ))),
         MeshMaterial3d(mat.clone()),
         Transform::from_xyz(
-            if sx <= 0.15 { x } else { 0.0 }.max(x) * if sx > 1.0 { 0.0 } else { 1.0 } + if sx > 1.0 { 0.0 } else { x },
+            if sx <= 0.15 { x } else { 0.0 }.max(x) * if sx > 1.0 { 0.0 } else { 1.0 }
+                + if sx > 1.0 { 0.0 } else { x },
             0.04,
             if sz > 1.0 && sx <= 0.15 { 0.0 } else { 0.0 },
         ),
@@ -406,7 +496,9 @@ fn spawn_arc(
         let t = i as f32 / (segs as f32 - 1.0);
         let ang = -std::f32::consts::FRAC_PI_2 + t * std::f32::consts::PI;
         // Arc opens toward midcourt
-        let x = hoop_x - sign * radius * ang.cos().abs() * 0.15 - sign * (radius * (1.0 - (ang.sin()).abs() * 0.0));
+        let x = hoop_x
+            - sign * radius * ang.cos().abs() * 0.15
+            - sign * (radius * (1.0 - (ang.sin()).abs() * 0.0));
         let world_x = hoop_x - sign * (radius * ang.cos().max(0.15));
         let z = radius * ang.sin();
         let _ = x;
@@ -488,6 +580,10 @@ fn spawn_hoop(
     ));
     commands.spawn((
         ArenaRoot,
+        NetRipple {
+            rest_scale: Vec3::ONE,
+            pulse: 0.0,
+        },
         Mesh3d(meshes.add(Cone::new(RIM_RADIUS * 0.95, 0.45))),
         MeshMaterial3d(net.clone()),
         Transform {
@@ -514,5 +610,21 @@ fn spin_holo(time: Res<Time>, mut q: Query<&mut Transform, With<HoloSpin>>) {
     for mut t in &mut q {
         t.rotate_y(time.delta_secs() * 0.6);
         t.translation.y += (time.elapsed_secs() * 2.0).sin() * 0.0008;
+    }
+}
+
+fn pulse_nets(
+    time: Res<Time>,
+    mut buckets: MessageReader<crate::ball::BucketEvent>,
+    mut q: Query<(&mut Transform, &mut NetRipple)>,
+) {
+    let scored = buckets.read().count() > 0;
+    for (mut tf, mut net) in &mut q {
+        if scored {
+            net.pulse = 1.0;
+        }
+        net.pulse = (net.pulse - time.delta_secs() * 3.2).max(0.0);
+        let s = 1.0 + net.pulse * 0.45;
+        tf.scale = net.rest_scale * Vec3::new(s, 1.0 + net.pulse * 0.7, s);
     }
 }
