@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::ball::{Ball, BallState, Hold};
-use crate::gameplay::{AiBrain, GameRng, LiveControl, MatchClock, PlayerIntent, ShotMeter};
+use crate::gameplay::{AiBrain, GameRng, LastPass, LiveControl, MatchClock, PlayerIntent, ShotMeter};
 use crate::roster::Side;
 use crate::sim::{HOOP_X, clamp_to_court, in_paint, shot_kind};
 use crate::states::{AppState, GameMode, MatchConfig, Paused};
@@ -124,6 +124,7 @@ fn ai_decisions(
     intent: ResMut<PlayerIntent>,
     control: Res<LiveControl>,
     clock: Res<MatchClock>,
+    mut last_pass: ResMut<LastPass>,
     mut ball_q: Query<
         (&Transform, &mut crate::ball::BallVel, &mut BallState),
         (With<Ball>, Without<Player>),
@@ -233,6 +234,9 @@ fn ai_decisions(
         st.hold = Hold::Pass;
         st.holder = None;
         st.last_touch = Some(e);
+        st.last_passer = Some(e);
+        last_pass.passer = Some(e);
+        last_pass.age = 0.0;
         if let Ok((_, _, _, _, _, mut pose, mut clock, _, _)) = players.get_mut(e) {
             *pose = Pose::Pass;
             clock.0 = 0.0;

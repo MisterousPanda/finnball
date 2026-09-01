@@ -288,102 +288,104 @@ pub fn spawn_player(
                         ..default()
                     },
                 ))
-                .id();
-            // Anime eyes — oversized whites so they read at broadcast distance
-            root.spawn((
-                Mesh3d(sphere.clone()),
-                MeshMaterial3d(eye_w.clone()),
-                Transform {
-                    translation: Vec3::new(-0.085, 1.745, 0.185),
-                    scale: Vec3::new(0.09, 0.11, 0.045),
-                    ..default()
-                },
-            ));
-            root.spawn((
-                Mesh3d(sphere.clone()),
-                MeshMaterial3d(eye_w),
-                Transform {
-                    translation: Vec3::new(0.085, 1.745, 0.185),
-                    scale: Vec3::new(0.09, 0.11, 0.045),
-                    ..default()
-                },
-            ));
-            iris_l = root
-                .spawn((
-                    Mesh3d(sphere.clone()),
-                    MeshMaterial3d(eye_i.clone()),
-                    Transform {
-                        translation: Vec3::new(-0.085, 1.74, 0.22),
-                        scale: Vec3::splat(0.042),
-                        ..default()
-                    },
-                ))
-                .id();
-            iris_r = root
-                .spawn((
-                    Mesh3d(sphere.clone()),
-                    MeshMaterial3d(eye_i),
-                    Transform {
-                        translation: Vec3::new(0.085, 1.74, 0.22),
-                        scale: Vec3::splat(0.042),
-                        ..default()
-                    },
-                ))
-                .id();
-            brow_l = root
-                .spawn((
-                    Mesh3d(cuboid.clone()),
-                    MeshMaterial3d(brow_mat.clone()),
-                    Transform {
-                        translation: Vec3::new(-0.085, 1.84, 0.20),
-                        scale: Vec3::new(0.09, 0.016, 0.03),
-                        ..default()
-                    },
-                ))
-                .id();
-            brow_r = root
-                .spawn((
-                    Mesh3d(cuboid.clone()),
-                    MeshMaterial3d(brow_mat),
-                    Transform {
-                        translation: Vec3::new(0.085, 1.84, 0.20),
-                        scale: Vec3::new(0.09, 0.016, 0.03),
-                        ..default()
-                    },
-                ))
-                .id();
-            mouth = root
-                .spawn((
-                    Mesh3d(cuboid.clone()),
-                    MeshMaterial3d(mouth_mat),
-                    Transform {
-                        translation: Vec3::new(0.0, 1.62, 0.205),
-                        scale: Vec3::new(0.08, 0.022, 0.025),
-                        ..default()
-                    },
-                ))
-                .id();
-            blush_l = root
-                .spawn((
-                    Mesh3d(sphere.clone()),
-                    MeshMaterial3d(blush_mat.clone()),
-                    Transform {
-                        translation: Vec3::new(-0.145, 1.66, 0.155),
-                        scale: Vec3::splat(0.001),
-                        ..default()
-                    },
-                ))
-                .id();
-            blush_r = root
-                .spawn((
-                    Mesh3d(sphere.clone()),
-                    MeshMaterial3d(blush_mat),
-                    Transform {
-                        translation: Vec3::new(0.145, 1.66, 0.155),
-                        scale: Vec3::splat(0.001),
-                        ..default()
-                    },
-                ))
+                .with_children(|head| {
+                    // Local to the head so brows/mouth ride the bob.
+                    head.spawn((
+                        Mesh3d(sphere.clone()),
+                        MeshMaterial3d(eye_w.clone()),
+                        Transform {
+                            translation: Vec3::new(-0.35, 0.10, 0.77),
+                            scale: Vec3::new(0.38, 0.46, 0.19),
+                            ..default()
+                        },
+                    ));
+                    head.spawn((
+                        Mesh3d(sphere.clone()),
+                        MeshMaterial3d(eye_w),
+                        Transform {
+                            translation: Vec3::new(0.35, 0.10, 0.77),
+                            scale: Vec3::new(0.38, 0.46, 0.19),
+                            ..default()
+                        },
+                    ));
+                    iris_l = head
+                        .spawn((
+                            Mesh3d(sphere.clone()),
+                            MeshMaterial3d(eye_i.clone()),
+                            Transform {
+                                translation: Vec3::new(-0.35, 0.08, 0.92),
+                                scale: Vec3::splat(0.175),
+                                ..default()
+                            },
+                        ))
+                        .id();
+                    iris_r = head
+                        .spawn((
+                            Mesh3d(sphere.clone()),
+                            MeshMaterial3d(eye_i),
+                            Transform {
+                                translation: Vec3::new(0.35, 0.08, 0.92),
+                                scale: Vec3::splat(0.175),
+                                ..default()
+                            },
+                        ))
+                        .id();
+                    brow_l = head
+                        .spawn((
+                            Mesh3d(cuboid.clone()),
+                            MeshMaterial3d(brow_mat.clone()),
+                            Transform {
+                                translation: Vec3::new(-0.35, 0.50, 0.83),
+                                scale: Vec3::new(0.38, 0.07, 0.13),
+                                ..default()
+                            },
+                        ))
+                        .id();
+                    brow_r = head
+                        .spawn((
+                            Mesh3d(cuboid.clone()),
+                            MeshMaterial3d(brow_mat),
+                            Transform {
+                                translation: Vec3::new(0.35, 0.50, 0.83),
+                                scale: Vec3::new(0.38, 0.07, 0.13),
+                                ..default()
+                            },
+                        ))
+                        .id();
+                    mouth = head
+                        .spawn((
+                            Mesh3d(cuboid.clone()),
+                            MeshMaterial3d(mouth_mat),
+                            Transform {
+                                translation: Vec3::new(0.0, -0.42, 0.85),
+                                scale: Vec3::new(0.33, 0.09, 0.10),
+                                ..default()
+                            },
+                        ))
+                        .id();
+                    blush_l = head
+                        .spawn((
+                            Mesh3d(sphere.clone()),
+                            MeshMaterial3d(blush_mat.clone()),
+                            Transform {
+                                translation: Vec3::new(-0.60, -0.25, 0.65),
+                                scale: Vec3::splat(0.004),
+                                ..default()
+                            },
+                        ))
+                        .id();
+                    blush_r = head
+                        .spawn((
+                            Mesh3d(sphere.clone()),
+                            MeshMaterial3d(blush_mat),
+                            Transform {
+                                translation: Vec3::new(0.60, -0.25, 0.65),
+                                scale: Vec3::splat(0.004),
+                                ..default()
+                            },
+                        ))
+                        .id();
+                })
                 .id();
             spawn_jersey_number(
                 root,
@@ -814,11 +816,11 @@ fn update_face_expr(
         let [brow_l, brow_r, mouth, iris_l, iris_r, blush_l, blush_r] = &mut parts;
 
         let (brow_y, brow_z, mouth_sy, iris_s, blush_s) = match *expr {
-            FaceExpr::Neutral => (1.84, 0.0, 0.022, 0.042, 0.001),
-            FaceExpr::Focus => (1.825, 0.22, 0.014, 0.032, 0.001),
-            FaceExpr::Celebrate => (1.855, -0.18, 0.055, 0.048, 0.042),
-            FaceExpr::Angry => (1.818, 0.38, 0.018, 0.056, 0.001),
-            FaceExpr::Pain => (1.848, -0.28, 0.07, 0.028, 0.02),
+            FaceExpr::Neutral => (0.50, 0.0, 0.09, 0.175, 0.004),
+            FaceExpr::Focus => (0.44, 0.22, 0.06, 0.13, 0.004),
+            FaceExpr::Celebrate => (0.56, -0.18, 0.23, 0.20, 0.18),
+            FaceExpr::Angry => (0.41, 0.38, 0.075, 0.23, 0.004),
+            FaceExpr::Pain => (0.53, -0.28, 0.29, 0.12, 0.08),
         };
 
         brow_l.translation.y = brow_y;

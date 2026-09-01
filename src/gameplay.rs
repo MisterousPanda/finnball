@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
 use crate::ball::{Ball, BallSpin, BallState, BallVel, BucketEvent, Hold, spawn_ball};
+use crate::camera::GameCam;
 use crate::roster::Side;
 use crate::sim::{
     BALL_RADIUS, GRAVITY, HOOP_X, PAINT_DEPTH, RIM_HEIGHT, PassKind, ShotType, ballistic_velocity,
@@ -375,6 +376,7 @@ fn apply_intents(
     mut intent: ResMut<PlayerIntent>,
     mut meter: ResMut<ShotMeter>,
     control: Res<LiveControl>,
+    cam: Query<&Transform, (With<GameCam>, Without<Player>)>,
     mut q: Query<(
         Entity,
         &Player,
@@ -384,7 +386,7 @@ fn apply_intents(
         &mut Pose,
         &mut PoseClock,
         &mut Stamina,
-    )>,
+    ), Without<GameCam>>,
 ) {
     if paused.0 {
         return;
@@ -405,7 +407,21 @@ fn apply_intents(
         if matches!(*pose, Pose::Shoot | Pose::Dunk | Pose::Pass | Pose::Block | Pose::Stumble) {
             continue;
         }
-        let dir = Vec3::new(intent.move_xz.x, 0.0, intent.move_xz.y);
+        let stick = intent.move_xz;
+        let dir = if let Ok(ctf) = cam.single() {
+            let fwd = {
+                let f = ctf.forward();
+                Vec3::new(f.x, 0.0, f.z).normalize_or_zero()
+            };
+            let right = {
+                let r = ctf.right();
+                Vec3::new(r.x, 0.0, r.z).normalize_or_zero()
+            };
+            // W is stick.y = -1 → camera forward
+            right * stick.x + fwd * (-stick.y)
+        } else {
+            Vec3::new(stick.x, 0.0, stick.y)
+        };
         let sprint = intent.sprint && stam.0 > 0.12;
         let spd = crate::units::move_speed(ratings, sprint, stam.0);
         if dir.length_squared() > 0.04 {
@@ -985,6 +1001,7 @@ fn inbound_after_score(
     mut buckets: MessageReader<BucketEvent>,
     mut ticker: ResMut<Ticker>,
     mut last_pass: ResMut<LastPass>,
+    mut cams: MessageWriter<crate::camera::CamTrigger>,
     mut ball: Query<(&mut Transform, &mut BallVel, &mut BallState), (With<Ball>, Without<Player>)>,
     mut players: Query<(Entity, &Player, &mut Transform), Without<Ball>>,
 ) {
@@ -1043,6 +1060,7 @@ fn inbound_after_score(
             "INBOUND — FOXES HAVE IT".into()
         };
         ticker.age = 0.0;
+        cams.write(crate::camera::CamTrigger::Inbound);
     }
 }
 

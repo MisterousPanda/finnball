@@ -21,9 +21,11 @@ impl Plugin for FxPlugin {
                     age_sparks,
                     age_trails,
                     age_screen_juice,
+                    apply_hitstop,
                 )
                     .run_if(in_state(AppState::Playing)),
-            );
+            )
+            .add_systems(OnExit(AppState::Playing), restore_time_scale);
     }
 }
 
@@ -240,11 +242,27 @@ fn age_trails(
     }
 }
 
-fn age_screen_juice(time: Res<Time>, paused: Res<Paused>, mut juice: ResMut<ScreenJuice>) {
+fn age_screen_juice(time: Res<Time<Real>>, paused: Res<Paused>, mut juice: ResMut<ScreenJuice>) {
     if paused.0 {
         return;
     }
     let dt = time.delta_secs();
     juice.flash = (juice.flash - dt * 3.2).max(0.0);
     juice.hitstop = (juice.hitstop - dt * 8.0).max(0.0);
+}
+
+fn apply_hitstop(juice: Res<ScreenJuice>, paused: Res<Paused>, mut virt: ResMut<Time<Virtual>>) {
+    if paused.0 {
+        virt.set_relative_speed(0.0);
+        return;
+    }
+    if juice.hitstop > 0.0 {
+        virt.set_relative_speed(0.18);
+    } else {
+        virt.set_relative_speed(1.0);
+    }
+}
+
+fn restore_time_scale(mut virt: ResMut<Time<Virtual>>) {
+    virt.set_relative_speed(1.0);
 }
