@@ -164,7 +164,11 @@ fn orbit_menu_cam(
         return;
     };
     let t = time.elapsed_secs() * 0.18;
-    let desired = clamp_cam(Vec3::new(t.sin() * 18.0, 9.0 + t.cos() * 0.6, t.cos() * 18.0));
+    let desired = clamp_cam(Vec3::new(
+        t.sin() * 18.0,
+        9.0 + t.cos() * 0.6,
+        t.cos() * 18.0,
+    ));
     let look = Vec3::new(0.0, 0.6, 0.0);
     smooth_cam(
         &mut tf,
@@ -216,7 +220,10 @@ fn emit_cam_triggers(
             return None;
         }
         let holder = st.holder?;
-        players.get(holder).ok().map(|(_, tf, _)| tf.translation.x.abs() > 12.2)
+        players
+            .get(holder)
+            .ok()
+            .map(|(_, tf, _)| tf.translation.x.abs() > 12.2)
     });
     match inbound_now {
         Some(true) if !*inbound_latched => {
@@ -252,9 +259,7 @@ fn follow_game_cam(
     }
 
     let ball_pair = ball.single().ok();
-    let ball_pos = ball_pair
-        .map(|(t, _)| t.translation)
-        .unwrap_or(Vec3::ZERO);
+    let ball_pos = ball_pair.map(|(t, _)| t.translation).unwrap_or(Vec3::ZERO);
     let ball_state = ball_pair.map(|(_, s)| s);
     let hero_pos = hero
         .single()
@@ -331,12 +336,7 @@ fn follow_game_cam(
                     apply_shoot_cut(&mut director, &mut fx, &clock, court_dist(pos, hoop));
                 } else {
                     let hoop = nearest_hoop(&rims, ball_pos);
-                    apply_shoot_cut(
-                        &mut director,
-                        &mut fx,
-                        &clock,
-                        court_dist(ball_pos, hoop),
-                    );
+                    apply_shoot_cut(&mut director, &mut fx, &clock, court_dist(ball_pos, hoop));
                 }
             }
             CamTrigger::Steal => {
@@ -506,13 +506,34 @@ fn apply_shoot_cut(
     dist: f32,
 ) {
     if clock.shot < 3.0 {
-        cut_to(director, fx, CameraShot::BuzzerBeat, HOLD_BUZZER, 0.22, 0.35);
+        cut_to(
+            director,
+            fx,
+            CameraShot::BuzzerBeat,
+            HOLD_BUZZER,
+            0.22,
+            0.35,
+        );
         return;
     }
     if dist > 10.0 {
-        cut_to(director, fx, CameraShot::LogoHalfCourt, HOLD_SHOT, 0.08, 0.05);
+        cut_to(
+            director,
+            fx,
+            CameraShot::LogoHalfCourt,
+            HOLD_SHOT,
+            0.08,
+            0.05,
+        );
     } else if dist >= THREE_RADIUS {
-        cut_to(director, fx, CameraShot::ThreePointWide, HOLD_SHOT, 0.1, 0.08);
+        cut_to(
+            director,
+            fx,
+            CameraShot::ThreePointWide,
+            HOLD_SHOT,
+            0.1,
+            0.08,
+        );
     } else if dist < 3.5 {
         cut_to(director, fx, CameraShot::LayupGather, HOLD_SHOT, 0.16, 0.04);
     } else {
@@ -552,14 +573,7 @@ fn pick_live_base(
     }
 
     if state.hold == Hold::Held && ball_pos.x.abs() > 12.2 {
-        cut_to(
-            director,
-            fx,
-            CameraShot::InboundBaseline,
-            0.0,
-            0.0,
-            0.0,
-        );
+        cut_to(director, fx, CameraShot::InboundBaseline, 0.0, 0.0, 0.0);
         return;
     }
 
@@ -686,7 +700,13 @@ fn frame_shot(
         ),
         CameraShot::LayupGather => {
             let mid = actor.lerp(hoop, 0.28);
-            (mid + Vec3::new(0.0, 3.6, 7.2), hoop.lerp(actor, 0.45) + Vec3::Y * 0.4, 44.0, 4.2, 5.0)
+            (
+                mid + Vec3::new(0.0, 3.6, 7.2),
+                hoop.lerp(actor, 0.45) + Vec3::Y * 0.4,
+                44.0,
+                4.2,
+                5.0,
+            )
         }
         CameraShot::DunkTakeoff => (
             actor + Vec3::new(-2.1, 1.65, 4.6),
@@ -747,13 +767,7 @@ fn frame_shot(
             3.6,
             4.2,
         ),
-        CameraShot::ThreePointWide => (
-            Vec3::new(look.x * 0.12, 12.2, 18.2),
-            look,
-            58.0,
-            2.5,
-            3.0,
-        ),
+        CameraShot::ThreePointWide => (Vec3::new(look.x * 0.12, 12.2, 18.2), look, 58.0, 2.5, 3.0),
         CameraShot::LogoHalfCourt => (Vec3::new(look.x * 0.05, 14.4, 17.4), look, 60.0, 2.3, 2.8),
         CameraShot::InboundBaseline => (
             Vec3::new(actor.x.signum() * 16.2, 5.6, actor.z * 0.25),
