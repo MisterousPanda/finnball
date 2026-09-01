@@ -1,0 +1,31 @@
+[package]
+name = "finnball"
+version = "0.1.0"
+edition = "2021"
+description = "FINNBALL — anime street basketball, Space-Jam energy, modern esports presentation"
+license = "MIT"
+repository = "https://github.com/MisterousPanda/finnball"
+default-run = "finnball"
+
+[dependencies]
+bevy = { version = "0.18.1" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1"
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.wasm-release]
+inherits = "release"
+opt-level = "s"
+lto = true
+strip = true
+codegen-units = 1

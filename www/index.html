@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FINNBALL</title>
+    <meta
+      name="description"
+      content="FINNBALL — anime street basketball. Space-Jam energy, modern esports presentation. Built in Rust / Bevy."
+    />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #05070d;
+        color: #e8f6ff;
+        font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif;
+        overflow: hidden;
+      }
+      #boot {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        z-index: 2;
+        background: radial-gradient(ellipse at 50% 30%, #123 0%, #05070d 70%);
+        pointer-events: none;
+      }
+      #boot h1 {
+        font-size: clamp(42px, 8vw, 92px);
+        letter-spacing: 0.18em;
+        margin: 0;
+        color: #2ef0ff;
+        text-shadow: 0 0 24px #2ef0ff88;
+      }
+      #boot p {
+        margin: 0;
+        letter-spacing: 0.28em;
+        font-size: 13px;
+        color: #ff4eb6;
+      }
+      #boot .bar {
+        width: min(320px, 70vw);
+        height: 3px;
+        background: #122;
+        overflow: hidden;
+        margin-top: 18px;
+      }
+      #boot .bar > i {
+        display: block;
+        height: 100%;
+        width: 40%;
+        background: linear-gradient(90deg, #2ef0ff, #ff4eb6);
+        animation: slide 1.2s infinite;
+      }
+      @keyframes slide {
+        0% {
+          transform: translateX(-120%);
+        }
+        100% {
+          transform: translateX(320%);
+        }
+      }
+      canvas {
+        outline: none;
+        width: 100%;
+        height: 100%;
+        display: block;
+        background: #05070d;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="boot">
+      <h1>FINNBALL</h1>
+      <p>ANIME STREET × THE COURT</p>
+      <div class="bar"><i></i></div>
+    </div>
+    <canvas id="bevy"></canvas>
+    <script type="module">
+      const boot = document.getElementById("boot");
+      try {
+        const mod = await import("./pkg/finnball.js");
+        await mod.default();
+        if (boot) boot.style.opacity = "0";
+        setTimeout(() => boot?.remove(), 700);
+      } catch (err) {
+        console.error(err);
+        if (boot) {
+          boot.innerHTML = `
+            <h1>FINNBALL</h1>
+            <p>WEB BUILD NOT ATTACHED YET</p>
+            <p style="color:#e8f6ff;letter-spacing:0.08em;max-width:520px;text-align:center;line-height:1.6">
+              Native: <code>cargo run --release</code><br/>
+              Browser: <code>./scripts/build-web.sh</code> then host <code>www/</code><br/>
+              Vercel cannot compile Bevy; it serves this static WebGL client.
+            </p>`;
+        }
+      }
+    </script>
+  </body>
+</html>
