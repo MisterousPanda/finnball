@@ -14,6 +14,17 @@ use crate::states::{AppState, MatchConfig};
 /// Texels per meter for the painted hardwood. 64 → 1997x1165 RGBA (~9 MB), fine for WebGL2.
 const COURT_PX_PER_M: u32 = 64;
 
+/// WebGL2 has no storage buffers, so every fan is close to one draw call. Thin the
+/// crowd there and skip the head spheres; native keeps the full house.
+#[cfg(target_arch = "wasm32")]
+const FAN_SPACING: f32 = 0.92;
+#[cfg(not(target_arch = "wasm32"))]
+const FAN_SPACING: f32 = 0.62;
+#[cfg(target_arch = "wasm32")]
+const FAN_HEADS: bool = false;
+#[cfg(not(target_arch = "wasm32"))]
+const FAN_HEADS: bool = true;
+
 pub struct CourtPlugin;
 
 impl Plugin for CourtPlugin {
@@ -554,7 +565,7 @@ fn spawn_stands(
                         -s,
                     );
                 }
-                x += 0.62;
+                x += FAN_SPACING;
             }
         }
         // ends
@@ -587,7 +598,7 @@ fn spawn_stands(
                         0.0,
                     );
                 }
-                z += 0.66;
+                z += FAN_SPACING * 1.06;
             }
         }
     }
@@ -661,11 +672,13 @@ fn spawn_fan(
             Visibility::default(),
         ))
         .with_children(|p| {
-            p.spawn((
-                Mesh3d(head.clone()),
-                MeshMaterial3d(skin),
-                Transform::from_xyz(0.0, 0.46 / h + 0.16, 0.0),
-            ));
+            if FAN_HEADS {
+                p.spawn((
+                    Mesh3d(head.clone()),
+                    MeshMaterial3d(skin),
+                    Transform::from_xyz(0.0, 0.46 / h + 0.16, 0.0),
+                ));
+            }
         });
 }
 
