@@ -19,7 +19,25 @@ impl Plugin for SelectPlugin {
                 (char_clicks, lineup_label)
                     .run_if(in_state(AppState::CharacterSelect)),
             )
-            .add_systems(Update, court_clicks.run_if(in_state(AppState::CourtSelect)));
+            .add_systems(Update, court_clicks.run_if(in_state(AppState::CourtSelect)))
+            .add_systems(
+                Update,
+                escape_to_menu.run_if(
+                    in_state(AppState::CharacterSelect).or(in_state(AppState::CourtSelect)),
+                ),
+            );
+    }
+}
+
+fn escape_to_menu(
+    keys: Res<ButtonInput<KeyCode>>,
+    pads: Query<&Gamepad>,
+    mut next: ResMut<NextState<AppState>>,
+) {
+    if keys.just_pressed(KeyCode::Escape)
+        || pads.iter().any(|p| p.just_pressed(GamepadButton::East))
+    {
+        next.set(AppState::MainMenu);
     }
 }
 
