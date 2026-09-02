@@ -17,6 +17,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::arenas::{ArenaId, ArenaTheme};
+use crate::quality::Quality;
 use crate::courtpaint::{
     paint_banner_atlas, paint_court, paint_ribbon, paint_scoreboard, BannerSpec, CourtImage,
     ScoreboardData, PLANE_HALF_LEN, PLANE_HALF_WID,
@@ -29,19 +30,10 @@ use crate::sim::{COURT_HALF_LEN, COURT_HALF_WID, HOOP_X, RIM_HEIGHT, RIM_RADIUS}
 use crate::states::{AppState, MatchConfig};
 
 /// Texels per meter for the painted hardwood. 64 → 1997x1165 RGBA (~9 MB), fine for WebGL2.
-const COURT_PX_PER_M: u32 = 64;
 
 /// The crowd is merged into one mesh per stand section, so seat density is only a
 /// vertex-count question. The web build trims the top tiers to keep the upload small.
-#[cfg(target_arch = "wasm32")]
-const TIERS: usize = 7;
-#[cfg(not(target_arch = "wasm32"))]
-const TIERS: usize = 9;
 /// Upper-deck rows (impostor fans, ~10 vertices each).
-#[cfg(target_arch = "wasm32")]
-const UPPER_ROWS: usize = 7;
-#[cfg(not(target_arch = "wasm32"))]
-const UPPER_ROWS: usize = 10;
 const SEAT_PITCH: f32 = 0.56;
 /// World-space spacing of the aisles (stairs) that cut through every tier.
 const AISLE_SPACING: f32 = 6.72;
@@ -187,6 +179,7 @@ fn ensure_arena(
     mut built: ResMut<BuiltArena>,
     mut screens: ResMut<ArenaScreens>,
     asset_server: Res<AssetServer>,
+    quality: Res<Quality>,
     config: Res<MatchConfig>,
     existing: Query<Entity, With<ArenaRoot>>,
 ) {
@@ -198,7 +191,7 @@ fn ensure_arena(
     }
     built.0 = Some(config.arena);
     let theme = config.arena.theme();
-    let floor = court_texture(&mut images, &mut cache, &theme);
+    let floor = court_texture(&mut images, &mut cache, &theme, quality.court_px_per_m);
     build_arena(
         &mut commands,
         &mut meshes,
@@ -207,6 +200,7 @@ fn ensure_arena(
         &mut images,
         &mut screens,
         &asset_server,
+        &quality,
         &theme,
         floor,
     );
@@ -232,11 +226,12 @@ fn court_texture(
     images: &mut Assets<Image>,
     cache: &mut CourtTextures,
     theme: &ArenaTheme,
+    px_per_m: u32,
 ) -> Handle<Image> {
     if let Some(h) = cache.by_arena.get(&theme.id) {
         return h.clone();
     }
-    let painted = paint_court(COURT_PX_PER_M, &theme.palette());
+    let painted = paint_court(px_per_m, &theme.palette());
     let handle = images.add(image_from(painted, ImageSamplerDescriptor::linear()));
     cache.by_arena.insert(theme.id, handle.clone());
     handle
@@ -323,6 +318,7 @@ fn build_arena(
     images: &mut Assets<Image>,
     screens: &mut ArenaScreens,
     asset_server: &AssetServer,
+    quality: &Quality,
     theme: &ArenaTheme,
     floor_tex: Handle<Image>,
 ) {
@@ -548,7 +544,7 @@ fn build_arena(
     }
 
     // --- stands + crowd + courtside
-    let bowl = spawn_stands(commands, meshes, &crowd_mat, &parts, &mut deco, theme);
+    let bowl = spawn_stands(commands, meshes, &crowd_mat, &parts, &mut deco, theme, quality);
     let mut merged_verts = bowl.verts;
     merged_verts += spawn_courtside(
         commands,
@@ -939,8 +935,12 @@ fn build_arena(
 
     merged_verts += spawn_batch(commands, meshes, deco, &crowd_mat);
     info!(
-        "arena '{}' built: {} vertices in merged crowd/deco meshes ({} lower tiers, {} upper rows)",
-        theme.name, merged_verts, TIERS, UPPER_ROWS
+        "arena '{}' built: {} vertices in merged crowd/deco meshes ({} lower tiers, {} upper rows{})",
+        theme.name,
+        merged_verts,
+        quality.tiers,
+        quality.upper_rows,
+        if quality.mobile { ", mobile tier" } else { "" }
     );
 }
 
@@ -968,7 +968,9 @@ fn spawn_stands(
     parts: &Parts,
     deco: &mut Batch,
     theme: &ArenaTheme,
+    quality: &Quality,
 ) -> BowlInfo {
+    let tiers = quality.tiers;
     let home = crate::roster::Side::Home.primary();
     let away = crate::roster::Side::Away.primary();
     // Home fans fill the -x half, visitors the +x half, mixed in the middle.
@@ -1004,7 +1006,7 @@ fn spawn_stands(
     let mut side_batches: [[Batch; 3]; 2] = Default::default();
     let mut end_batches: [Batch; 2] = Default::default();
 
-    for tier in 0..TIERS {
+    for tier in 0..tiers {
         let y = FIRST_Y + tier as f32 * TIER_RISE;
         let off = tier as f32 * TIER_DEPTH;
         let side_len = (PLANE_HALF_LEN + 1.2 + off) * 2.0;
@@ -1039,7 +1041,7 @@ fn spawn_stands(
                 let batch = &mut side_batches[si][style_for(x)];
                 crowd::seat(batch, parts, origin, yaw, style);
                 let r = rng.next();
-                if r > 0.1 {
+                if r > 1.0 - quality.crowd_density {
                     crowd::fan(batch, parts, &mut rng, origin, yaw, style, r > 0.93);
                 }
             }
@@ -1047,8 +1049,8 @@ fn spawn_stands(
             for (ai, ax) in aisle_positions(side_len * 0.5).into_iter().enumerate() {
                 let front = z - s * TIER_DEPTH * 0.5;
                 let back = z + s * TIER_DEPTH * 0.5;
-                let vomitory = tier == TIERS / 2 && ai % 2 == 1 || tier == TIERS - 1 && ai % 2 == 0;
-                if !vomitory && tier + 1 < TIERS {
+                let vomitory = tier == tiers / 2 && ai % 2 == 1 || tier == tiers - 1 && ai % 2 == 0;
+                if !vomitory && tier + 1 < tiers {
                     // two steps up to the next tier
                     deco.block(
                         parts,
@@ -1074,7 +1076,7 @@ fn spawn_stands(
                     );
                 }
                 // centre hand rail: post + sloped bar to the next tier
-                if tier + 1 < TIERS && !vomitory {
+                if tier + 1 < tiers && !vomitory {
                     deco.block(
                         parts,
                         Vec3::new(ax, y + 0.45, front + s * 0.3),
@@ -1171,15 +1173,15 @@ fn spawn_stands(
                 let origin = Vec3::new(x + s * 0.1, y, zz);
                 crowd::seat(batch, parts, origin, yaw, end_style);
                 let r = rng.next();
-                if r > 0.12 {
+                if r > 1.02 - quality.crowd_density {
                     crowd::fan(batch, parts, &mut rng, origin, yaw, end_style, r > 0.94);
                 }
             }
             for (ai, az) in aisle_positions(end_len * 0.5).into_iter().enumerate() {
                 let front = x - s * TIER_DEPTH * 0.5;
                 let back = x + s * TIER_DEPTH * 0.5;
-                let vomitory = tier == TIERS / 2 && ai % 2 == 0;
-                if !vomitory && tier + 1 < TIERS {
+                let vomitory = tier == tiers / 2 && ai % 2 == 0;
+                if !vomitory && tier + 1 < tiers {
                     deco.block(
                         parts,
                         Vec3::new(back - s * 0.45, y + TIER_RISE * 0.25, az),
@@ -1265,8 +1267,8 @@ fn spawn_stands(
     }
 
     // --- suite level: glass boxes with warm light and silhouettes
-    let top_y = FIRST_Y + TIERS as f32 * TIER_RISE;
-    let far = TIERS as f32 * TIER_DEPTH;
+    let top_y = FIRST_Y + tiers as f32 * TIER_RISE;
+    let far = tiers as f32 * TIER_DEPTH;
     let suite_y0 = top_y + 0.3;
     let suite_h = 2.8;
     let facade = [0.025, 0.028, 0.04];
@@ -1359,7 +1361,7 @@ fn spawn_stands(
         // Labs panorama) keep only a shallow upper tier so the generated world
         // rises above the bowl instead of a wall of seats.
         let open_air = theme.env_pano.is_some();
-        let upper_rows = if open_air { 3 } else { UPPER_ROWS };
+        let upper_rows = if open_air { 3.min(quality.upper_rows) } else { quality.upper_rows };
         let up_y0 = suite_y0 + suite_h + 0.3;
         let up_side0 = side_face + 0.9;
         let up_end0 = end_face + 0.9;
