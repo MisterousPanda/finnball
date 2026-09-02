@@ -21,11 +21,9 @@ enum Action {
     Quit,
 }
 
-fn setup(mut commands: Commands, windows: Query<&Window>) {
-    // Phones in landscape are ~400 logical px tall; scale the stack so every
-    // button stays on screen instead of falling off the bottom.
-    let h = windows.single().map(|w| w.height()).unwrap_or(900.0);
-    let s = (h / 900.0).clamp(0.5, 1.0);
+fn setup(mut commands: Commands) {
+    // Small screens are handled globally by `UiScale` (see `ui::fit_ui_scale`).
+    let s = 1.0;
     commands.spawn((
         DespawnOnExit(AppState::MainMenu),
         Node {
