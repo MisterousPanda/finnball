@@ -27,14 +27,12 @@ pub struct CourtPlugin;
 impl Plugin for CourtPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CourtTextures>()
-            .add_systems(
-                OnEnter(AppState::Playing),
-                (cleanup_arenas, spawn_arena).chain(),
-            )
-            .add_systems(OnEnter(AppState::Splash), spawn_menu_arena)
-            .add_systems(OnEnter(AppState::MainMenu), spawn_menu_arena)
-            .add_systems(OnEnter(AppState::CharacterSelect), spawn_menu_arena)
-            .add_systems(OnEnter(AppState::CourtSelect), spawn_menu_arena)
+            .init_resource::<BuiltArena>()
+            .add_systems(OnEnter(AppState::Playing), ensure_arena)
+            .add_systems(OnEnter(AppState::Splash), ensure_arena)
+            .add_systems(OnEnter(AppState::MainMenu), ensure_arena)
+            .add_systems(OnEnter(AppState::CharacterSelect), ensure_arena)
+            .add_systems(OnEnter(AppState::CourtSelect), ensure_arena)
             .add_systems(
                 Update,
                 spin_holo.run_if(
@@ -90,46 +88,34 @@ pub struct CourtTextures {
     by_arena: HashMap<ArenaId, Handle<Image>>,
 }
 
-fn cleanup_arenas(mut commands: Commands, q: Query<Entity, With<ArenaRoot>>) {
-    for e in &q {
-        commands.entity(e).despawn();
-    }
-}
+/// Which arena theme the live `ArenaRoot` entities were built for. The arena is
+/// shared between the menu and the match so pressing PLAY does not tear down and
+/// regenerate the whole stadium (hundreds of thousands of crowd vertices) — that
+/// rebuild was a multi-second stall on slower machines and phones.
+#[derive(Resource, Default)]
+struct BuiltArena(Option<ArenaId>);
 
-pub fn spawn_arena(
+/// Builds the arena for the currently selected theme if none exists yet or the
+/// theme changed since the last build. Match-only entities (players, ball, HUD)
+/// carry `DespawnOnExit(Playing)` and are managed by their own systems.
+fn ensure_arena(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut crowd_mats: ResMut<Assets<CrowdMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut cache: ResMut<CourtTextures>,
-    config: Res<MatchConfig>,
-) {
-    let theme = config.arena.theme();
-    let floor = court_texture(&mut images, &mut cache, &theme);
-    build_arena(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        &mut crowd_mats,
-        &theme,
-        floor,
-    );
-}
-
-fn spawn_menu_arena(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut crowd_mats: ResMut<Assets<CrowdMaterial>>,
-    mut images: ResMut<Assets<Image>>,
-    mut cache: ResMut<CourtTextures>,
+    mut built: ResMut<BuiltArena>,
     config: Res<MatchConfig>,
     existing: Query<Entity, With<ArenaRoot>>,
 ) {
-    if !existing.is_empty() {
+    if built.0 == Some(config.arena) && !existing.is_empty() {
         return;
     }
+    for e in &existing {
+        commands.entity(e).despawn();
+    }
+    built.0 = Some(config.arena);
     let theme = config.arena.theme();
     let floor = court_texture(&mut images, &mut cache, &theme);
     build_arena(

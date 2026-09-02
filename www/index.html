@@ -111,6 +111,14 @@
         await mod.default();
         if (boot) boot.style.opacity = "0";
         setTimeout(() => boot?.remove(), 700);
+        // Keyboard events only reach the game while the canvas is focused; make
+        // sure it is, both on boot and after any tap/click on the page.
+        const canvas = document.getElementById("bevy");
+        if (canvas) {
+          canvas.setAttribute("tabindex", "0");
+          canvas.focus({ preventScroll: true });
+          window.addEventListener("pointerdown", () => canvas.focus({ preventScroll: true }));
+        }
       } catch (err) {
         console.error(err);
         if (boot) {
