@@ -18,4 +18,4 @@ cp -r assets/shaders www/assets/shaders
 # www/pkg is gitignored; Railway `up` honors gitignore, so stage a deploy copy.
 cp -f www/pkg/finnball.js www/pkg/finnball_bg.wasm www/game/
 echo "Web build ready → www/ (WASM + audio + shader assets)"
-echo "Railway: www/game is the uploaded client; then: railway up"
+echo "Railway: ./scripts/deploy-railway.sh (plain railway up drops the gitignored www/game)"
