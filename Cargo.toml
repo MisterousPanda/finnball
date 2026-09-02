@@ -8,7 +8,44 @@ repository = "https://github.com/MisterousPanda/finnball"
 default-run = "finnball"
 
 [dependencies]
-bevy = { version = "0.18.1", features = ["wav", "jpeg"] }
+# Only the Bevy pieces FINNBALL uses: the default 2d/3d/ui bundle also pulls in
+# glTF, animation, gizmos, scenes, sprites, SMAA/FXAA and vorbis, which is dead
+# weight in the wasm (Safari on iPhone has to JIT all of it).
+bevy = { version = "0.18.1", default-features = false, features = [
+  "std",
+  "async_executor",
+  "multi_threaded",
+  "bevy_asset",
+  "bevy_log",
+  "bevy_state",
+  "bevy_window",
+  "bevy_winit",
+  "bevy_input_focus",
+  "bevy_gilrs",
+  "x11",
+  "bevy_color",
+  "bevy_camera",
+  "bevy_mesh",
+  "bevy_shader",
+  "bevy_image",
+  "bevy_render",
+  "bevy_core_pipeline",
+  "bevy_light",
+  "bevy_pbr",
+  "bevy_post_process",
+  "bevy_text",
+  "bevy_ui",
+  "bevy_ui_render",
+  "ui_picking",
+  "default_font",
+  "tonemapping_luts",
+  "zstd_rust",
+  "png",
+  "jpeg",
+  "bevy_audio",
+  "wav",
+  "webgl2",
+] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"
@@ -30,3 +67,4 @@ opt-level = "s"
 lto = true
 strip = true
 codegen-units = 1
+panic = "abort"
