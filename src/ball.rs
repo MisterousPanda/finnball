@@ -21,7 +21,55 @@ impl Plugin for BallPlugin {
                 (integrate_ball, hoop_collision, follow_ball_shadow)
                     .chain()
                     .run_if(in_state(AppState::Playing)),
+            )
+            .add_systems(
+                Update,
+                (spin_ball_skin, squash_and_glow).run_if(in_state(AppState::Playing)),
             );
+    }
+}
+
+/// Visual skin child of the ball: it carries the leather mesh and takes the spin, so
+/// the root can be squashed along world axes without the flattening rotating away.
+#[derive(Component)]
+pub struct BallSkin;
+
+/// Halo child; scales with speed and swaps to the hot look when the shooter is on fire.
+#[derive(Component)]
+pub struct BallGlow {
+    pub cool: Handle<StandardMaterial>,
+    pub hot: Handle<StandardMaterial>,
+}
+
+/// Floor-bounce squash timer on the ball root.
+#[derive(Component, Default)]
+pub struct BallSquash {
+    pub t: f32,
+    pub amount: f32,
+}
+
+pub const SQUASH_TIME: f32 = 0.06;
+
+/// Squash factor (1 = round) for a bounce of `impact` m/s at `t` seconds after contact.
+pub fn squash_scale(impact: f32, t: f32) -> Vec3 {
+    if t <= 0.0 || t > SQUASH_TIME {
+        return Vec3::ONE;
+    }
+    let k = (t / SQUASH_TIME).clamp(0.0, 1.0);
+    let amount = (0.15 * (impact / 6.0).clamp(0.6, 1.4)).min(0.2);
+    // Full squash right at contact, easing back to round.
+    let y = 1.0 - amount * k;
+    let xz = 1.0 + amount * 0.6 * k;
+    Vec3::new(xz, y, xz)
+}
+
+/// Halo radius multiplier for a ball moving at `speed` m/s.
+pub fn glow_scale(speed: f32, hot: bool) -> f32 {
+    let base = 1.0 + (speed * 0.035).min(0.6);
+    if hot {
+        base * 1.25
+    } else {
+        base
     }
 }
 
@@ -165,6 +213,13 @@ pub fn spawn_ball(
         alpha_mode: AlphaMode::Blend,
         ..default()
     });
+    let glow_hot = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.3, 0.05, 0.3),
+        emissive: LinearRgba::new(4.5, 1.1, 0.1, 1.0),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
     let shadow_mat = materials.add(StandardMaterial {
         base_color: Color::srgba(0.0, 0.0, 0.0, 0.45),
         unlit: true,
@@ -178,6 +233,7 @@ pub fn spawn_ball(
             BallVel(Vec3::ZERO),
             BallSpin(Vec3::new(0.0, 8.0, 0.0)),
             BallPrev(pos),
+            BallSquash::default(),
             BallState {
                 hold: Hold::Loose,
                 holder: None,
@@ -188,16 +244,26 @@ pub fn spawn_ball(
                 rim_hits: 0,
                 release_was_three: false,
             },
-            Mesh3d(meshes.add(Sphere::new(VISUAL_RADIUS).mesh().uv(40, 24))),
-            MeshMaterial3d(mat),
             Transform::from_translation(pos),
+            Visibility::default(),
             crate::court::ArenaRoot,
             DespawnOnExit(AppState::Playing),
         ))
         .with_children(|b| {
             b.spawn((
+                BallSkin,
+                Mesh3d(meshes.add(Sphere::new(VISUAL_RADIUS).mesh().uv(40, 24))),
+                MeshMaterial3d(mat),
+                Transform::IDENTITY,
+            ));
+            b.spawn((
+                BallGlow {
+                    cool: glow.clone(),
+                    hot: glow_hot,
+                },
                 Mesh3d(meshes.add(Sphere::new(VISUAL_RADIUS * 1.32))),
                 MeshMaterial3d(glow),
+                Transform::IDENTITY,
             ));
         })
         .id();
@@ -256,10 +322,7 @@ fn integrate_ball(
             vel.0 = Vec3::from_array(aero);
         }
         tf.translation += vel.0 * dt;
-        let omega = spin.0.length();
-        if omega > 0.01 {
-            tf.rotate(Quat::from_axis_angle(spin.0.normalize(), omega * dt));
-        }
+        // Spin is applied to the `BallSkin` child in `spin_ball_skin`.
 
         if tf.translation.y < VISUAL_RADIUS {
             tf.translation.y = VISUAL_RADIUS;
@@ -384,6 +447,89 @@ fn hoop_collision(
     }
 }
 
+/// Rotates the leather skin by the sim spin; a held ball keeps a lazy roll so the seams
+/// still move while dribbling.
+fn spin_ball_skin(
+    time: Res<Time>,
+    paused: Res<Paused>,
+    ball: Query<(&BallSpin, &BallState, &BallVel), With<Ball>>,
+    mut skin: Query<&mut Transform, (With<BallSkin>, Without<Ball>)>,
+) {
+    if paused.0 {
+        return;
+    }
+    let Ok((spin, state, vel)) = ball.single() else {
+        return;
+    };
+    let dt = time.delta_secs();
+    let omega = if state.hold == Hold::Held {
+        // roll about the axis perpendicular to travel, like a dribbled ball would
+        let v = Vec3::new(vel.0.x, 0.0, vel.0.z);
+        let axis = Vec3::Y.cross(v);
+        if axis.length_squared() > 0.01 {
+            axis.normalize() * (v.length() / VISUAL_RADIUS) * 0.35 + Vec3::Y * 2.0
+        } else {
+            Vec3::Y * 2.5
+        }
+    } else {
+        spin.0
+    };
+    let len = omega.length();
+    if len > 0.01 {
+        for mut tf in &mut skin {
+            tf.rotate(Quat::from_axis_angle(omega / len, len * dt));
+        }
+    }
+}
+
+/// Floor-bounce squash on the root and a speed / heat driven halo.
+fn squash_and_glow(
+    time: Res<Time>,
+    paused: Res<Paused>,
+    mut floor: MessageReader<FloorBounceEvent>,
+    heats: Query<&crate::units::Heat>,
+    mut ball: Query<(&mut Transform, &mut BallSquash, &BallVel, &BallState), With<Ball>>,
+    mut glow: Query<
+        (&mut Transform, &BallGlow, &mut MeshMaterial3d<StandardMaterial>),
+        (Without<Ball>, Without<BallSkin>),
+    >,
+) {
+    if paused.0 {
+        return;
+    }
+    let Ok((mut tf, mut squash, vel, state)) = ball.single_mut() else {
+        return;
+    };
+    for ev in floor.read() {
+        squash.t = SQUASH_TIME;
+        squash.amount = ev.speed;
+    }
+    let dt = time.delta_secs();
+    tf.scale = squash_scale(squash.amount, squash.t);
+    squash.t = (squash.t - dt).max(0.0);
+
+    let hot = state
+        .shooter
+        .or(state.holder)
+        .and_then(|e| heats.get(e).ok())
+        .map(|h| h.on_fire())
+        .unwrap_or(false);
+    let speed = vel.0.length();
+    let flicker = if hot {
+        1.0 + (time.elapsed_secs() * 21.0).sin() * 0.06
+    } else {
+        1.0
+    };
+    for (mut gtf, g, mut mat) in &mut glow {
+        let s = glow_scale(speed, hot) * flicker;
+        gtf.scale = Vec3::splat(s);
+        let want = if hot { &g.hot } else { &g.cool };
+        if mat.0 != *want {
+            mat.0 = want.clone();
+        }
+    }
+}
+
 fn follow_ball_shadow(
     ball: Query<&Transform, (With<Ball>, Without<BallShadow>)>,
     mut shadow: Query<&mut Transform, (With<BallShadow>, Without<Ball>)>,
@@ -420,5 +566,27 @@ mod tests {
         // …and the equator seam is dark.
         let seam = px(0.125, 0.5);
         assert!(seam.0 < 60);
+    }
+
+    #[test]
+    fn squash_flattens_then_recovers() {
+        let contact = squash_scale(6.0, SQUASH_TIME);
+        assert!(contact.y < 0.9 && contact.y > 0.8, "y = {}", contact.y);
+        assert!(contact.x > 1.0 && (contact.x - contact.z).abs() < 1e-6);
+        let half = squash_scale(6.0, SQUASH_TIME * 0.5);
+        assert!(half.y > contact.y);
+        assert_eq!(squash_scale(6.0, 0.0), Vec3::ONE);
+        assert_eq!(squash_scale(6.0, 1.0), Vec3::ONE);
+        // Harder impacts squash more, but never past the cap.
+        assert!(squash_scale(12.0, SQUASH_TIME).y <= squash_scale(3.0, SQUASH_TIME).y);
+        assert!(squash_scale(100.0, SQUASH_TIME).y >= 0.8);
+    }
+
+    #[test]
+    fn glow_grows_with_speed_and_heat() {
+        assert!((glow_scale(0.0, false) - 1.0).abs() < 1e-6);
+        assert!(glow_scale(8.0, false) > glow_scale(2.0, false));
+        assert!(glow_scale(50.0, false) <= 1.6 + 1e-6);
+        assert!(glow_scale(5.0, true) > glow_scale(5.0, false));
     }
 }
