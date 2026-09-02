@@ -11,7 +11,15 @@ impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerIntent>().add_systems(
             Update,
-            (read_input, switch_player, toggle_pause, cycle_camera)
+            (
+                read_input,
+                crate::touch::apply_touch,
+                crate::touch::tap_buttons,
+                switch_player,
+                toggle_pause,
+                cycle_camera,
+            )
+                .chain()
                 .run_if(in_state(AppState::Playing)),
         );
     }
