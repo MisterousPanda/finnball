@@ -1,8 +1,11 @@
 mod ai;
 mod arenas;
+mod audio;
 mod ball;
 mod camera;
 mod court;
+mod courtpaint;
+mod crowd;
 mod fx;
 mod gameplay;
 mod input;
@@ -35,7 +38,13 @@ fn main() {
                     }),
                     ..default()
                 })
-                .set(ImagePlugin::default_nearest()),
+                .set(ImagePlugin::default_nearest())
+                // No `.meta` sidecars ship with the game; on the web a static host would
+                // answer those probes with index.html and the loader would choke on it.
+                .set(AssetPlugin {
+                    meta_check: bevy::asset::AssetMetaCheck::Never,
+                    ..default()
+                }),
         )
         .insert_resource(ClearColor(Color::srgb(0.02, 0.03, 0.06)))
         .insert_resource(states::MatchConfig::default())
@@ -44,12 +53,14 @@ fn main() {
         .add_plugins((
             camera::CameraPlugin,
             court::CourtPlugin,
+            crowd::CrowdPlugin,
             units::UnitsPlugin,
             ball::BallPlugin,
             gameplay::GameplayPlugin,
             ai::AiPlugin,
             input::InputPlugin,
             fx::FxPlugin,
+            audio::FinnAudioPlugin,
             ui::UiPlugin,
         ))
         .run();

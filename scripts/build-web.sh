@@ -11,5 +11,11 @@ cargo build --profile wasm-release --target wasm32-unknown-unknown
 mkdir -p www/pkg
 wasm-bindgen --target web --out-dir www/pkg --no-typescript \
   target/wasm32-unknown-unknown/wasm-release/finnball.wasm
-echo "Web build ready → www/"
-echo "Railway: keep www/pkg local (gitignored), then: railway up"
+mkdir -p www/assets www/game
+rm -rf www/assets/audio www/assets/shaders
+cp -r assets/audio www/assets/audio
+cp -r assets/shaders www/assets/shaders
+# www/pkg is gitignored; Railway `up` honors gitignore, so stage a deploy copy.
+cp -f www/pkg/finnball.js www/pkg/finnball_bg.wasm www/game/
+echo "Web build ready → www/ (WASM + audio + shader assets)"
+echo "Railway: ./scripts/deploy-railway.sh (plain railway up drops the gitignored www/game)"

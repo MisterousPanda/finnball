@@ -81,15 +81,88 @@
       <div class="bar"><i></i></div>
     </div>
     <canvas id="bevy"></canvas>
+    <script>
+      (function () {
+        const events = ["click", "keydown", "pointerup", "touchend"];
+        const AC = window.AudioContext || window.webkitAudioContext;
+        const contexts = [];
+        if (AC) {
+          window.AudioContext = new Proxy(AC, {
+            construct(Target, args) {
+              const ctx = new Target(...args);
+              contexts.push(ctx);
+              return ctx;
+            },
+          });
+        }
+        function resume() {
+          contexts.forEach((c) => c.state !== "running" && c.resume());
+          if (contexts.length && contexts.every((c) => c.state === "running")) {
+            events.forEach((e) => document.removeEventListener(e, resume));
+          }
+        }
+        events.forEach((e) => document.addEventListener(e, resume));
+      })();
+    </script>
+    <script>
+      // A stale finnball.js or finnball_bg.wasm from an earlier deploy makes the
+      // game render but throw on every input event. Detect that signature once,
+      // refetch both files past the HTTP cache, and reload.
+      (function () {
+        const KEY = "finnball-refetched";
+        let healing = false;
+        async function heal(reason) {
+          if (healing || sessionStorage.getItem(KEY)) return;
+          healing = true;
+          sessionStorage.setItem(KEY, String(Date.now()));
+          console.warn("FINNBALL: stale client detected (" + reason + "); refetching");
+          try {
+            await Promise.all(
+              ["./game/finnball.js", "./game/finnball_bg.wasm"].map((u) =>
+                fetch(u, { cache: "reload" })
+              )
+            );
+          } catch (_) {}
+          location.reload();
+        }
+        function looksStale(msg) {
+          return /__wbindgen|wasm\.\w+ is not a function|table index is out of bounds/i.test(
+            String(msg || "")
+          );
+        }
+        window.addEventListener("error", (e) => {
+          if (looksStale(e.message) || looksStale(e.error && e.error.message)) heal(e.message);
+        });
+        window.addEventListener("unhandledrejection", (e) => {
+          const r = e.reason;
+          if (looksStale(r && r.message ? r.message : r)) heal(r && r.message);
+        });
+        window.__finnballHeal = heal;
+        // Clear the once-only flag after a successful session so a future deploy can heal again.
+        setTimeout(() => sessionStorage.removeItem(KEY), 60000);
+      })();
+    </script>
     <script type="module">
       const boot = document.getElementById("boot");
       try {
-        const mod = await import("./pkg/finnball.js");
+        const mod = await import("./game/finnball.js");
         await mod.default();
         if (boot) boot.style.opacity = "0";
         setTimeout(() => boot?.remove(), 700);
+        // Keyboard events only reach the game while the canvas is focused; make
+        // sure it is, both on boot and after any tap/click on the page.
+        const canvas = document.getElementById("bevy");
+        if (canvas) {
+          canvas.setAttribute("tabindex", "0");
+          canvas.focus({ preventScroll: true });
+          window.addEventListener("pointerdown", () => canvas.focus({ preventScroll: true }));
+        }
       } catch (err) {
         console.error(err);
+        if (window.__finnballHeal && /__wbindgen|is not a function|LinkError|CompileError/i.test(String(err))) {
+          await window.__finnballHeal(String(err));
+          return;
+        }
         if (boot) {
           boot.innerHTML = `
             <h1>FINNBALL</h1>

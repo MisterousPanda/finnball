@@ -1,10 +1,12 @@
 use bevy::prelude::*;
 
+use crate::camera::CameraPostFx;
+use crate::fx::ScreenJuice;
 use crate::gameplay::{LiveControl, MatchClock, Scoreboard, ShotMeter, Ticker};
 use crate::states::{AppState, CameraSettings, GameMode, MatchConfig, Paused};
-use crate::theme::{CYAN, GOLD, LIVE, MAGENTA, MUTED, PANEL, TEXT, title_font};
-use crate::units::{BoxLine, Player, Stamina};
+use crate::theme::{title_font, CYAN, GOLD, LIVE, MAGENTA, MUTED, PANEL, TEXT};
 use crate::ui::MenuBtn;
+use crate::units::{BoxLine, Player, Stamina};
 
 pub struct HudPlugin;
 
@@ -14,7 +16,8 @@ impl Plugin for HudPlugin {
             .add_systems(OnEnter(AppState::GameOver), setup_over)
             .add_systems(
                 Update,
-                (refresh_hud, pause_overlay).run_if(in_state(AppState::Playing)),
+                (refresh_hud, pause_overlay, drive_broadcast_fx)
+                    .run_if(in_state(AppState::Playing)),
             )
             .add_systems(Update, over_clicks.run_if(in_state(AppState::GameOver)));
     }
@@ -41,6 +44,13 @@ struct MeterFill;
 #[derive(Component)]
 struct PauseLayer;
 
+#[derive(Component)]
+struct LetterTop;
+#[derive(Component)]
+struct LetterBot;
+#[derive(Component)]
+struct CrowdFlash;
+
 #[derive(Component, Clone, Copy)]
 enum OverNav {
     Menu,
@@ -48,6 +58,47 @@ enum OverNav {
 }
 
 fn setup_hud(mut commands: Commands) {
+    commands.spawn((
+        DespawnOnExit(AppState::Playing),
+        CrowdFlash,
+        Node {
+            position_type: PositionType::Absolute,
+            width: percent(100),
+            height: percent(100),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.0)),
+        ZIndex(20),
+        Pickable::IGNORE,
+    ));
+    commands.spawn((
+        DespawnOnExit(AppState::Playing),
+        LetterTop,
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(0),
+            width: percent(100),
+            height: px(0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.88)),
+        ZIndex(18),
+        Pickable::IGNORE,
+    ));
+    commands.spawn((
+        DespawnOnExit(AppState::Playing),
+        LetterBot,
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: px(0),
+            width: percent(100),
+            height: px(0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.88)),
+        ZIndex(18),
+        Pickable::IGNORE,
+    ));
     commands.spawn((
         DespawnOnExit(AppState::Playing),
         Node {
@@ -107,18 +158,30 @@ fn setup_hud(mut commands: Commands) {
                                     ..default()
                                 },
                                 BorderColor::all(CYAN.with_alpha(0.4)),
-                                children![(
-                                    MeterFill,
-                                    Node {
-                                        width: percent(0),
-                                        height: percent(100),
-                                        ..default()
-                                    },
-                                    BackgroundColor(GOLD),
-                                )],
+                                children![
+                                    (
+                                        MeterFill,
+                                        Node {
+                                            width: percent(0),
+                                            height: percent(100),
+                                            ..default()
+                                        },
+                                        BackgroundColor(GOLD),
+                                    ),
+                                    (
+                                        Node {
+                                            position_type: PositionType::Absolute,
+                                            left: percent(70.0),
+                                            width: px(2),
+                                            height: percent(100),
+                                            ..default()
+                                        },
+                                        BackgroundColor(CYAN),
+                                    ),
+                                ],
                             ),
                             (
-                                Text::new("SPACE meter  •  E pass  •  Q steal  •  F dunk"),
+                                Text::new("SPACE shot (gold=green)  •  E pass  •  T lob  •  G bounce  •  Q steal  •  F dunk  •  R block"),
                                 title_font(12.0),
                                 TextColor(MUTED),
                             ),
@@ -144,13 +207,58 @@ fn refresh_hud(
     control: Res<LiveControl>,
     cam: Res<CameraSettings>,
     config: Res<MatchConfig>,
-    players: Query<(Entity, &Player, &Stamina, &BoxLine)>,
-    mut score_t: Query<&mut Text, (With<ScoreText>, Without<ClockText>, Without<ShotText>, Without<TickerText>, Without<PlayerText>)>,
-    mut clock_t: Query<&mut Text, (With<ClockText>, Without<ScoreText>, Without<ShotText>, Without<TickerText>, Without<PlayerText>)>,
-    mut shot_t: Query<&mut Text, (With<ShotText>, Without<ScoreText>, Without<ClockText>, Without<TickerText>, Without<PlayerText>)>,
-    mut tick_t: Query<&mut Text, (With<TickerText>, Without<ScoreText>, Without<ClockText>, Without<ShotText>, Without<PlayerText>)>,
-    mut play_t: Query<&mut Text, (With<PlayerText>, Without<ScoreText>, Without<ClockText>, Without<ShotText>, Without<TickerText>)>,
-    mut fill: Query<&mut Node, With<MeterFill>>,
+    players: Query<(Entity, &Player, &Stamina, &BoxLine, &crate::units::Heat)>,
+    mut score_t: Query<
+        &mut Text,
+        (
+            With<ScoreText>,
+            Without<ClockText>,
+            Without<ShotText>,
+            Without<TickerText>,
+            Without<PlayerText>,
+        ),
+    >,
+    mut clock_t: Query<
+        &mut Text,
+        (
+            With<ClockText>,
+            Without<ScoreText>,
+            Without<ShotText>,
+            Without<TickerText>,
+            Without<PlayerText>,
+        ),
+    >,
+    mut shot_t: Query<
+        &mut Text,
+        (
+            With<ShotText>,
+            Without<ScoreText>,
+            Without<ClockText>,
+            Without<TickerText>,
+            Without<PlayerText>,
+        ),
+    >,
+    mut tick_t: Query<
+        &mut Text,
+        (
+            With<TickerText>,
+            Without<ScoreText>,
+            Without<ClockText>,
+            Without<ShotText>,
+            Without<PlayerText>,
+        ),
+    >,
+    mut play_t: Query<
+        &mut Text,
+        (
+            With<PlayerText>,
+            Without<ScoreText>,
+            Without<ClockText>,
+            Without<ShotText>,
+            Without<TickerText>,
+        ),
+    >,
+    mut fill: Query<(&mut Node, &mut BackgroundColor), With<MeterFill>>,
 ) {
     for mut t in &mut score_t {
         *t = Text::new(format!("FOX  {}  —  {}  CRN", score.home, score.away));
@@ -160,7 +268,12 @@ fn refresh_hud(
         if config.mode == GameMode::Practice {
             *t = Text::new("PRACTICE");
         } else {
-            *t = Text::new(format!("Q{}  {}:{}", clock.quarter, secs / 60, format!("{:02}", secs % 60)));
+            *t = Text::new(format!(
+                "Q{}  {}:{}",
+                clock.quarter,
+                secs / 60,
+                format!("{:02}", secs % 60)
+            ));
         }
     }
     for mut t in &mut shot_t {
@@ -170,11 +283,19 @@ fn refresh_hud(
         *t = Text::new(ticker.line.clone());
     }
     if let Some(e) = control.entity {
-        if let Ok((_, p, stam, boxl)) = players.get(e) {
+        if let Ok((_, p, stam, boxl, heat)) = players.get(e) {
+            let fire = if heat.on_fire() {
+                "  ON FIRE"
+            } else if heat.streak >= 2 {
+                "  HEATING UP"
+            } else {
+                ""
+            };
             for mut t in &mut play_t {
                 *t = Text::new(format!(
-                    "{}\n{}  CAM {:?}  STM {:02.0}%\nPTS {}  AST {}  REB {}  STL {}",
+                    "{}{}\n{}  CAM {:?}  STM {:02.0}%\nPTS {}  AST {}  REB {}  STL {}",
                     p.id.profile().name,
+                    fire,
                     p.id.profile().alias,
                     cam.mode,
                     stam.0 * 100.0,
@@ -186,9 +307,44 @@ fn refresh_hud(
             }
         }
     }
-    for mut n in &mut fill {
-        let pct = if meter.armed { meter.value } else { 0.0 };
+    for (mut n, mut bg) in &mut fill {
+        let pct = if meter.armed || meter.freeze > 0.0 {
+            meter.value
+        } else {
+            0.0
+        };
         n.width = percent(pct * 100.0);
+        let err = (meter.value - 0.72).abs();
+        *bg = if meter.armed && err < 0.07 {
+            BackgroundColor(CYAN)
+        } else if meter.armed && err < 0.16 {
+            BackgroundColor(GOLD)
+        } else {
+            BackgroundColor(MAGENTA.with_alpha(0.85))
+        };
+    }
+}
+
+fn drive_broadcast_fx(
+    cam: Res<CameraPostFx>,
+    juice: Res<ScreenJuice>,
+    mut flash: Query<
+        &mut BackgroundColor,
+        (With<CrowdFlash>, Without<LetterTop>, Without<LetterBot>),
+    >,
+    mut top: Query<&mut Node, (With<LetterTop>, Without<LetterBot>)>,
+    mut bot: Query<&mut Node, (With<LetterBot>, Without<LetterTop>)>,
+) {
+    let a = (cam.crowd_flash.max(juice.flash) * 0.22).clamp(0.0, 0.35);
+    for mut bg in &mut flash {
+        *bg = BackgroundColor(Color::srgba(1.0, 0.95, 0.85, a));
+    }
+    let h = 70.0 * cam.letterbox;
+    for mut n in &mut top {
+        n.height = px(h);
+    }
+    for mut n in &mut bot {
+        n.height = px(h);
     }
 }
 

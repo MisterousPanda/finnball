@@ -1,11 +1,13 @@
 use bevy::prelude::*;
 
 use crate::ball::{Ball, BallState, Hold};
-use crate::gameplay::{AiBrain, GameRng, LiveControl, MatchClock, PlayerIntent, ShotMeter};
+use crate::gameplay::{
+    AiBrain, GameRng, LastPass, LiveControl, MatchClock, PlayerIntent, ShotMeter,
+};
 use crate::roster::Side;
-use crate::sim::{HOOP_X, clamp_to_court, in_paint, shot_kind};
+use crate::sim::{ai_wants_shot, clamp_to_court, in_paint, shot_kind, HOOP_X};
 use crate::states::{AppState, GameMode, MatchConfig, Paused};
-use crate::units::{MoveVel, Player, Pose, PoseClock, Ratings, Stamina};
+use crate::units::{Heat, MoveVel, Player, Pose, PoseClock, Ratings, Stamina};
 
 pub struct AiPlugin;
 
@@ -24,25 +26,32 @@ fn ai_move(
     time: Res<Time<Fixed>>,
     paused: Res<Paused>,
     control: Res<LiveControl>,
-    ball: Query<(&Transform, &BallState), (With<Ball>, Without<Player>)>,
-    mut players: Query<(
-        Entity,
-        &Player,
-        &Ratings,
-        &mut Transform,
-        &mut MoveVel,
-        &Pose,
-        &Stamina,
-        &mut AiBrain,
-    ), Without<Ball>>,
+    ball: Query<(&Transform, &BallState, &crate::ball::BallVel), (With<Ball>, Without<Player>)>,
+    mut players: Query<
+        (
+            Entity,
+            &Player,
+            &Ratings,
+            &mut Transform,
+            &mut MoveVel,
+            &Pose,
+            &Stamina,
+            &mut AiBrain,
+        ),
+        Without<Ball>,
+    >,
 ) {
     if paused.0 {
         return;
     }
     let dt = time.delta_secs();
-    let Ok((btf, bstate)) = ball.single() else {
+    let Ok((btf, bstate, bvel)) = ball.single() else {
         return;
     };
+    let ball_live_loose = bstate.hold == Hold::Loose
+        || (matches!(bstate.hold, Hold::Shot | Hold::Pass)
+            && btf.translation.y < 1.6
+            && bvel.0.length() < 7.0);
     let holder_side = bstate.holder.and_then(|h| {
         players
             .iter()
@@ -52,19 +61,47 @@ fn ai_move(
 
     let snapshot: Vec<(Entity, Side, Vec3, bool)> = players
         .iter()
-        .map(|(e, p, _, t, ..)| (e, p.side, t.translation, p.human && control.entity == Some(e)))
+        .map(|(e, p, _, t, ..)| {
+            (
+                e,
+                p.side,
+                t.translation,
+                p.human && control.entity == Some(e),
+            )
+        })
         .collect();
+    // Only the closest AI on each team chases a loose ball; the rest keep their spacing.
+    let ball_flat = btf.translation.with_y(0.0);
+    let hunter_for = |side: Side| -> Option<Entity> {
+        snapshot
+            .iter()
+            .filter(|(_, s, _, human)| *s == side && !*human)
+            .min_by(|a, b| {
+                a.2.with_y(0.0)
+                    .distance(ball_flat)
+                    .partial_cmp(&b.2.with_y(0.0).distance(ball_flat))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(e, ..)| *e)
+    };
+    let hunters = [hunter_for(Side::Home), hunter_for(Side::Away)];
 
     for (e, p, ratings, mut tf, mut vel, pose, stam, mut brain) in &mut players {
         if control.entity == Some(e) {
             continue;
         }
-        if matches!(*pose, Pose::Shoot | Pose::Dunk | Pose::Pass | Pose::Stumble | Pose::Celebrate | Pose::Block)
-        {
+        if matches!(
+            *pose,
+            Pose::Shoot | Pose::Dunk | Pose::Pass | Pose::Stumble | Pose::Celebrate | Pose::Block
+        ) {
             continue;
         }
         brain.think += dt;
-        let hoop_x = if p.side == Side::Home { HOOP_X } else { -HOOP_X };
+        let hoop_x = if p.side == Side::Home {
+            HOOP_X
+        } else {
+            -HOOP_X
+        };
         let on_offense = match holder_side {
             Some(s) => s == p.side,
             None => true,
@@ -74,7 +111,11 @@ fn ai_move(
         let target = if has_ball {
             // Attack: drive toward elbow then hoop
             let lane_z = if tf.translation.z.abs() < 0.4 {
-                if p.slot % 2 == 0 { 2.4 } else { -2.4 }
+                if p.slot % 2 == 0 {
+                    2.4
+                } else {
+                    -2.4
+                }
             } else {
                 tf.translation.z * 0.4
             };
@@ -92,8 +133,8 @@ fn ai_move(
         };
 
         // Loose ball hunt
-        let dest = if bstate.hold == Hold::Loose {
-            btf.translation.with_y(0.0)
+        let dest = if ball_live_loose && hunters.contains(&Some(e)) {
+            ball_flat
         } else {
             target
         };
@@ -112,7 +153,6 @@ fn ai_move(
         tf.translation.x = x;
         tf.translation.z = z;
         tf.translation.y = 0.0;
-        let _ = snapshot;
     }
 }
 
@@ -124,21 +164,26 @@ fn ai_decisions(
     intent: ResMut<PlayerIntent>,
     control: Res<LiveControl>,
     clock: Res<MatchClock>,
+    mut last_pass: ResMut<LastPass>,
     mut ball_q: Query<
         (&Transform, &mut crate::ball::BallVel, &mut BallState),
         (With<Ball>, Without<Player>),
     >,
-    mut players: Query<(
-        Entity,
-        &Player,
-        &Ratings,
-        &Transform,
-        &MoveVel,
-        &mut Pose,
-        &mut PoseClock,
-        &Stamina,
-        &mut AiBrain,
-    ), Without<Ball>>,
+    mut players: Query<
+        (
+            Entity,
+            &Player,
+            &Ratings,
+            &Transform,
+            &MoveVel,
+            &mut Pose,
+            &mut PoseClock,
+            &Stamina,
+            &mut AiBrain,
+            &Heat,
+        ),
+        Without<Ball>,
+    >,
 ) {
     if paused.0 || config.mode == GameMode::Practice {
         return;
@@ -156,12 +201,25 @@ fn ai_decisions(
     }
 
     let mut me = None;
-    for (e, p, r, t, v, _, _, s, brain) in &players {
+    for (e, p, r, t, v, _, _, s, brain, heat) in &players {
         if e == holder {
-            me = Some((e, p.side, t.translation, v.0, r.clone(), s.0, brain.think, r.pass, r.three, r.mid, r.dunk));
+            me = Some((
+                e,
+                p.side,
+                t.translation,
+                v.0,
+                r.clone(),
+                s.0,
+                brain.think,
+                r.pass,
+                r.three,
+                r.mid,
+                r.dunk,
+                heat.streak,
+            ));
         }
     }
-    let Some((e, side, pos, vel, ratings, stam, think, pass, three, mid, dunk)) = me else {
+    let Some((e, side, pos, vel, ratings, stam, think, pass, three, mid, dunk, streak)) = me else {
         return;
     };
     if think < 0.45 {
@@ -170,15 +228,21 @@ fn ai_decisions(
 
     let hoop_x = if side == Side::Home { HOOP_X } else { -HOOP_X };
     let dist = (pos.x - hoop_x).hypot(pos.z);
-    let open = players.iter().filter(|(_, p, _, t, ..)| p.side != side && t.translation.distance(pos) < 1.8).count() == 0;
-    let pressure = clock.shot < 5.0;
+    let open = players
+        .iter()
+        .filter(|(_, p, _, t, ..)| p.side != side && t.translation.distance(pos) < 1.8)
+        .count()
+        == 0;
+    let rating = if matches!(shot_kind(pos.x, pos.z, hoop_x), crate::sim::ShotKind::Three) {
+        three
+    } else {
+        mid
+    };
     let should_dunk = in_paint(pos.x, pos.z, hoop_x) && dunk > 72.0 && vel.length() > 2.0;
-    let should_shoot = (open && dist < 9.5 && (if matches!(shot_kind(pos.x, pos.z, hoop_x), crate::sim::ShotKind::Three) { three } else { mid }) > 62.0)
-        || pressure
-        || (dist < 3.2);
+    let should_shoot = ai_wants_shot(dist, open, rating, clock.shot, dist < 3.2);
 
     // Reset brain
-    if let Ok((_, _, _, _, _, _, _, _, mut brain)) = players.get_mut(e) {
+    if let Ok((_, _, _, _, _, _, _, _, mut brain, _)) = players.get_mut(e) {
         brain.think = 0.0;
     }
 
@@ -187,17 +251,32 @@ fn ai_decisions(
         // Directly launch like gameplay shoot
         let hoop = Vec3::new(hoop_x, crate::sim::RIM_HEIGHT, 0.0);
         let mut target = hoop;
-        if rng.f32() > 0.55 + ratings.three / 400.0 {
-            target += Vec3::new(rng.range(-0.5, 0.5), rng.range(0.0, 0.4), rng.range(-0.5, 0.5));
+        let make = (0.55 + ratings.three / 400.0) * crate::sim::heat_make_mult(streak);
+        if rng.f32() > make {
+            target += Vec3::new(
+                rng.range(-0.5, 0.5),
+                rng.range(0.0, 0.4),
+                rng.range(-0.5, 0.5),
+            );
         }
         let flight = crate::sim::flight_time_for_distance(dist);
         let from = [pos.x, 1.85, pos.z];
-        let v = crate::sim::ballistic_velocity(from, [target.x, target.y, target.z], flight, crate::sim::GRAVITY);
+        let v = crate::sim::ballistic_velocity(
+            from,
+            [target.x, target.y, target.z],
+            flight,
+            crate::sim::GRAVITY,
+        );
         bvel.0 = Vec3::new(v[0], v[1], v[2]);
         st.hold = Hold::Shot;
         st.holder = None;
         st.shooter = Some(e);
-        if let Ok((_, _, _, _, _, mut pose, mut clock, _, _)) = players.get_mut(e) {
+        st.rim_hits = 0;
+        st.release_was_three = matches!(
+            crate::sim::shot_kind(pos.x, pos.z, hoop_x),
+            crate::sim::ShotKind::Three
+        );
+        if let Ok((_, _, _, _, _, mut pose, mut clock, _, _, _)) = players.get_mut(e) {
             *pose = if should_dunk { Pose::Dunk } else { Pose::Shoot };
             clock.0 = 0.0;
         }
@@ -228,7 +307,10 @@ fn ai_decisions(
         st.hold = Hold::Pass;
         st.holder = None;
         st.last_touch = Some(e);
-        if let Ok((_, _, _, _, _, mut pose, mut clock, _, _)) = players.get_mut(e) {
+        st.last_passer = Some(e);
+        last_pass.passer = Some(e);
+        last_pass.age = 0.0;
+        if let Ok((_, _, _, _, _, mut pose, mut clock, _, _, _)) = players.get_mut(e) {
             *pose = Pose::Pass;
             clock.0 = 0.0;
         }
