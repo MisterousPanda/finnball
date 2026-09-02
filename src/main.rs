@@ -13,6 +13,7 @@ mod roster;
 mod sim;
 mod states;
 mod theme;
+mod touch;
 mod ui;
 mod units;
 
@@ -59,6 +60,7 @@ fn main() {
             gameplay::GameplayPlugin,
             ai::AiPlugin,
             input::InputPlugin,
+            touch::TouchPlugin,
             fx::FxPlugin,
             audio::FinnAudioPlugin,
             ui::UiPlugin,

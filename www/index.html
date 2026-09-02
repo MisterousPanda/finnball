@@ -17,6 +17,38 @@
         color: #e8f6ff;
         font-family: ui-sans-serif, "Segoe UI", system-ui, sans-serif;
         overflow: hidden;
+        /* A finger drag on a phone must never become pull-to-refresh, edge-swipe
+           navigation, zoom or text selection — those all restart the game. */
+        overscroll-behavior: none;
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
+        -webkit-touch-callout: none;
+      }
+      body {
+        position: fixed;
+        inset: 0;
+      }
+      #errbar {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 3;
+        display: none;
+        max-height: 40vh;
+        overflow: auto;
+        padding: 10px 14px;
+        font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace;
+        color: #ffd6e7;
+        background: rgba(40, 0, 20, 0.92);
+        border-top: 2px solid #ff4eb6;
+        white-space: pre-wrap;
+        word-break: break-word;
+        pointer-events: auto;
+      }
+      #errbar b {
+        color: #2ef0ff;
       }
       #boot {
         position: absolute;
@@ -71,6 +103,7 @@
         height: 100%;
         display: block;
         background: #05070d;
+        touch-action: none;
       }
     </style>
   </head>
@@ -104,17 +137,50 @@
         events.forEach((e) => document.addEventListener(e, resume));
       })();
     </script>
+    <div id="errbar"></div>
     <script>
-      // A stale finnball.js or finnball_bg.wasm from an earlier deploy makes the
-      // game render but throw on every input event. Detect that signature once,
-      // refetch both files past the HTTP cache, and reload.
       (function () {
+        const bar = document.getElementById("errbar");
+        const lines = [];
+        function show(kind, text) {
+          if (!bar) return;
+          const t = String(text || "").slice(0, 600);
+          if (lines.some((l) => l.text === t)) return;
+          lines.push({ kind, text: t });
+          if (lines.length > 4) lines.shift();
+          const esc = (x) => x.replace(/</g, "&lt;");
+          bar.innerHTML =
+            "<b>FINNBALL diagnostics</b> (tap to hide)\n" +
+            lines.map((l) => "[" + l.kind + "] " + esc(l.text)).join("\n") +
+            "\n<b>device</b> " + esc(navigator.userAgent);
+          bar.style.display = "block";
+        }
+        if (bar) bar.addEventListener("pointerdown", () => (bar.style.display = "none"));
+        window.__finnballShow = show;
+
+        // If the previous page load reloaded itself, say why.
+        const last = localStorage.getItem("finnball-last-reload");
+        localStorage.removeItem("finnball-last-reload");
+        const nav = performance.getEntriesByType && performance.getEntriesByType("navigation")[0];
+        if (last && nav && nav.type === "reload") show("reloaded", last);
+
+        // A stale finnball.js or finnball_bg.wasm from an earlier deploy makes the
+        // game render but throw on every input event. Exact signatures only: old
+        // glue calling exports the new wasm no longer has, or new glue indexing a
+        // closure table the old wasm does not have.
+        const STALE =
+          /__wbindgen_func_elem_\d+ is not a function|wasm\.__wbindgen_export\d* is (undefined|not a function)|reading '__wbindgen|table index is out of bounds|Table\.get\(\): invalid/i;
         const KEY = "finnball-refetched";
         let healing = false;
         async function heal(reason) {
-          if (healing || sessionStorage.getItem(KEY)) return;
+          if (healing) return;
+          if (sessionStorage.getItem(KEY)) {
+            show("stale client (already reloaded once this session)", reason);
+            return;
+          }
           healing = true;
           sessionStorage.setItem(KEY, String(Date.now()));
+          localStorage.setItem("finnball-last-reload", "refreshed stale game files: " + reason);
           console.warn("FINNBALL: stale client detected (" + reason + "); refetching");
           try {
             await Promise.all(
@@ -125,21 +191,36 @@
           } catch (_) {}
           location.reload();
         }
-        function looksStale(msg) {
-          return /__wbindgen|wasm\.\w+ is not a function|table index is out of bounds/i.test(
-            String(msg || "")
-          );
+        window.__finnballHeal = heal;
+        window.__finnballStale = (m) => STALE.test(String(m || ""));
+
+        function onError(msg) {
+          const text = String(msg || "");
+          if (STALE.test(text)) heal(text);
+          else if (text && text !== "Script error.") show("error", text);
         }
-        window.addEventListener("error", (e) => {
-          if (looksStale(e.message) || looksStale(e.error && e.error.message)) heal(e.message);
-        });
+        window.addEventListener("error", (e) => onError(e.message || (e.error && e.error.message)));
         window.addEventListener("unhandledrejection", (e) => {
           const r = e.reason;
-          if (looksStale(r && r.message ? r.message : r)) heal(r && r.message);
+          onError(r && r.message ? r.message : r);
         });
-        window.__finnballHeal = heal;
-        // Clear the once-only flag after a successful session so a future deploy can heal again.
-        setTimeout(() => sessionStorage.removeItem(KEY), 60000);
+        // Rust panics arrive through console.error (console_error_panic_hook).
+        const origError = console.error.bind(console);
+        console.error = function () {
+          const text = Array.from(arguments).map(String).join(" ");
+          if (/panicked at|RuntimeError|unreachable/i.test(text)) show("panic", text);
+          origError.apply(console, arguments);
+        };
+        // Record when the browser (not the game) tears the page down, e.g. a
+        // pull-to-refresh or a memory kill, so the next load can say so.
+        window.addEventListener("pagehide", () => {
+          if (!healing) {
+            localStorage.setItem(
+              "finnball-last-reload",
+              "the browser closed or reloaded the page (pull-to-refresh, back-swipe, or memory) at " + new Date().toISOString()
+            );
+          }
+        });
       })();
     </script>
     <script type="module">
@@ -159,11 +240,11 @@
         }
       } catch (err) {
         console.error(err);
-        const stale =
-          window.__finnballHeal && /__wbindgen|is not a function|LinkError|CompileError/i.test(String(err));
+        const stale = window.__finnballStale && window.__finnballStale(err);
         if (stale) {
           await window.__finnballHeal(String(err));
         } else if (boot) {
+          if (window.__finnballShow) window.__finnballShow("boot failed", String(err));
           boot.innerHTML = `
             <h1>FINNBALL</h1>
             <p>WEB BUILD NOT ATTACHED YET</p>

@@ -53,7 +53,7 @@ fn setup(mut commands: Commands) {
                 },
             ),
             (
-                Text::new("click or press any key  •  sound on"),
+                Text::new("tap, click or press any key  •  sound on"),
                 title_font(14.0),
                 TextColor(TEXT),
                 Node {
@@ -70,10 +70,14 @@ fn tick(
     mut timer: ResMut<SplashTimer>,
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
+    touches: Res<bevy::input::touch::Touches>,
     mut next: ResMut<NextState<AppState>>,
 ) {
     timer.0.tick(time.delta());
-    if timer.0.is_finished() || keys.get_just_pressed().next().is_some() || mouse.just_pressed(MouseButton::Left)
+    if timer.0.is_finished()
+        || keys.get_just_pressed().next().is_some()
+        || mouse.just_pressed(MouseButton::Left)
+        || touches.any_just_pressed()
     {
         next.set(AppState::MainMenu);
     }
