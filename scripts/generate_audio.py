@@ -779,11 +779,11 @@ def _net(sr: int, rng, dur: float, snap: float, fizz: float, jingle: float) -> n
 
 
 def render_swish() -> np.ndarray:
-    return _net(SR_SFX, rng_for(111), 0.5, 1.0, 0.9, 0.12)
+    return _net(SR_SFX, rng_for(111), 0.5, 0.5, 1.4, 0.16)
 
 
 def render_swish_soft() -> np.ndarray:
-    return _net(SR_SFX, rng_for(112), 0.36, 0.55, 0.7, 0.06)
+    return _net(SR_SFX, rng_for(112), 0.36, 0.35, 1.1, 0.08)
 
 
 def render_rattle() -> np.ndarray:
