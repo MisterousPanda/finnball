@@ -14,7 +14,7 @@ pub struct TouchPlugin;
 impl Plugin for TouchPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TouchState>()
-            .add_systems(Update, detect_touch)
+            .add_systems(Update, (detect_touch, cap_render_scale))
             .add_systems(OnEnter(AppState::Playing), spawn_touch_ui)
             .add_systems(
                 Update,
@@ -58,6 +58,22 @@ pub struct StickKnob;
 
 const STICK_RADIUS: f32 = 64.0;
 const DEADZONE: f32 = 0.14;
+
+/// Phones report a 2–3× device pixel ratio; rendering the arena at that
+/// resolution costs 4–9× the fill rate of 1× for no visible gain at arm's
+/// length. On the web, cap the backing scale. UI stays in logical pixels.
+fn cap_render_scale(mut windows: Query<&mut Window>, mut done: Local<bool>) {
+    if *done || !cfg!(target_arch = "wasm32") {
+        return;
+    }
+    for mut window in &mut windows {
+        let native = window.resolution.base_scale_factor();
+        if native > 1.5 {
+            window.resolution.set_scale_factor_override(Some(1.5));
+        }
+        *done = true;
+    }
+}
 
 fn detect_touch(touches: Res<Touches>, mut state: ResMut<TouchState>) {
     if !state.seen && touches.iter().next().is_some() {

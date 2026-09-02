@@ -160,10 +160,9 @@
 
         // If the previous page load reloaded itself, say why.
         const last = localStorage.getItem("finnball-last-reload");
-        if (last) {
-          localStorage.removeItem("finnball-last-reload");
-          show("reloaded", last);
-        }
+        localStorage.removeItem("finnball-last-reload");
+        const nav = performance.getEntriesByType && performance.getEntriesByType("navigation")[0];
+        if (last && nav && nav.type === "reload") show("reloaded", last);
 
         // A stale finnball.js or finnball_bg.wasm from an earlier deploy makes the
         // game render but throw on every input event. Exact signatures only: old
