@@ -1191,4 +1191,129 @@ mod tests {
         assert_eq!(side_index(Side::Home), 0);
         assert_eq!(side_index(Side::Away), 1);
     }
+
+    /// Minimal headless world with the FX asset table and the resources the
+    /// event-driven FX systems read.
+    fn fx_world() -> World {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = World::new();
+        world.init_resource::<Assets<Mesh>>();
+        world.init_resource::<Assets<StandardMaterial>>();
+        world.init_resource::<FxRng>();
+        world.init_resource::<ScreenJuice>();
+        world.init_resource::<CameraPostFx>();
+        world.insert_resource(Paused(false));
+        world.insert_resource(Time::<()>::default());
+        world.init_resource::<Messages<BucketEvent>>();
+        world.init_resource::<Messages<RimHitEvent>>();
+        world.init_resource::<Messages<BackboardHitEvent>>();
+        world.run_system_once(setup_fx_assets).expect("assets");
+        world
+    }
+
+    fn count_particles(world: &mut World) -> usize {
+        world.query::<&Particle>().iter(world).count()
+    }
+
+    fn count_meshes(world: &mut World) -> usize {
+        world.query::<&Mesh3d>().iter(world).count()
+    }
+
+    /// Every burst spawned by the event FX must age out completely — nothing
+    /// may leak into the next possession.
+    #[test]
+    fn event_fx_spawn_and_fully_despawn() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut world = fx_world();
+        world.write_message(BucketEvent {
+            shooter: None,
+            hoop_home: false,
+            dunk: true,
+            is_three: false,
+        });
+        world.write_message(RimHitEvent {
+            pos: Vec3::new(HOOP_X, RIM_HEIGHT, 0.2),
+            speed: 7.0,
+        });
+        world.write_message(BackboardHitEvent {
+            pos: Vec3::new(HOOP_X + 0.4, RIM_HEIGHT + 0.3, 0.1),
+        });
+        world.run_system_once(spawn_on_bucket).expect("bucket fx");
+        world.run_system_once(rim_fx).expect("rim fx");
+        world.run_system_once(board_fx).expect("board fx");
+
+        let spawned = count_particles(&mut world);
+        assert!(spawned >= 40, "expected a rich burst, got {spawned} particles");
+        assert!(count_meshes(&mut world) >= spawned);
+        let juice = world.resource::<ScreenJuice>();
+        assert!(juice.flash > 0.0 && juice.hitstop > 0.0);
+
+        // Age at 50 ms steps; the longest-lived particle is well under 4 s.
+        for _ in 0..80 {
+            {
+                let mut t = world.resource_mut::<Time<()>>();
+                t.advance_by(std::time::Duration::from_millis(50));
+            }
+            world.run_system_once(age_particles).expect("age");
+        }
+        assert_eq!(count_particles(&mut world), 0, "particles leaked");
+        // Score-pop glyph children ride along with their particle root.
+        assert_eq!(count_meshes(&mut world), 0, "mesh children leaked");
+    }
+
+    /// The fire aura appears once the streak ignites, follows its owner and
+    /// tears down (flames included) as soon as the streak breaks.
+    #[test]
+    fn fire_aura_follows_heat() {
+        use bevy::ecs::system::RunSystemOnce;
+        use crate::roster::CharacterId;
+        let mut world = fx_world();
+        world.init_resource::<JuiceClock>();
+        let player = world
+            .spawn((
+                Player {
+                    id: CharacterId::KaitoFlash,
+                    side: Side::Home,
+                    slot: 0,
+                    human: true,
+                },
+                Heat { streak: 3 },
+                Transform::from_xyz(1.0, 0.0, 2.0),
+            ))
+            .id();
+        world.run_system_once(fire_aura).expect("aura");
+        let auras: Vec<(Entity, Vec3)> = world
+            .query::<(Entity, &FireAura, &Transform)>()
+            .iter(&world)
+            .map(|(e, _, t)| (e, t.translation))
+            .collect();
+        assert_eq!(auras.len(), 1);
+        assert_eq!(auras[0].1, Vec3::new(1.0, 0.0, 2.0));
+        let flames = world.query::<&Flame>().iter(&world).count();
+        assert_eq!(flames, 9, "eight tongues plus the floor ring");
+
+        // Move the owner; the aura root tracks and no second aura is spawned.
+        world.get_mut::<Transform>(player).unwrap().translation.x = 4.0;
+        world.run_system_once(fire_aura).expect("aura");
+        let roots: Vec<Vec3> = world
+            .query::<(&FireAura, &Transform)>()
+            .iter(&world)
+            .map(|(_, t)| t.translation)
+            .collect();
+        assert_eq!(roots, vec![Vec3::new(4.0, 0.0, 2.0)]);
+
+        // Streak breaks: aura and its flames are gone, only embers remain to age out.
+        world.get_mut::<Heat>(player).unwrap().streak = 0;
+        world.run_system_once(fire_aura).expect("aura");
+        assert_eq!(world.query::<&FireAura>().iter(&world).count(), 0);
+        assert_eq!(world.query::<&Flame>().iter(&world).count(), 0);
+        for _ in 0..30 {
+            {
+                let mut t = world.resource_mut::<Time<()>>();
+                t.advance_by(std::time::Duration::from_millis(50));
+            }
+            world.run_system_once(age_particles).expect("age");
+        }
+        assert_eq!(count_particles(&mut world), 0, "embers leaked");
+    }
 }
