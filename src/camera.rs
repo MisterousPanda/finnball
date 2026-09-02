@@ -8,7 +8,7 @@ use crate::court::RimMarker;
 use crate::gameplay::{MatchClock, PlayCall};
 use crate::roster::Side;
 use crate::sim::{HOOP_X, RIM_HEIGHT, THREE_RADIUS};
-use crate::states::{AppState, CameraMode, CameraSettings, Paused};
+use crate::states::{AppState, CameraMode, CameraSettings, MatchConfig, Paused};
 use crate::units::{Controlled, Player, Pose};
 
 const FLOOR_Y: f32 = 1.2;
@@ -25,6 +25,9 @@ const HOLD_BLOCK: f32 = 0.45;
 const HOLD_STEAL: f32 = 0.4;
 const HOLD_INBOUND: f32 = 1.1;
 const HOLD_BUZZER: f32 = 0.7;
+/// Tip-off establishing shot: a slow crane across the open bowl so the World
+/// Labs environment above the stands gets a moment before play.
+const HOLD_FLYOVER: f32 = 3.4;
 const REPLAY_COOLDOWN: f32 = 2.2;
 
 pub struct CameraPlugin;
@@ -40,6 +43,7 @@ impl Plugin for CameraPlugin {
                 Update,
                 orbit_menu_cam.run_if(not(in_state(AppState::Playing))),
             )
+            .add_systems(OnEnter(AppState::Playing), open_with_flyover)
             .add_systems(
                 Update,
                 (emit_cam_triggers, follow_game_cam)
@@ -73,6 +77,7 @@ pub enum CameraShot {
     ReplayEnglish,
     CelebrateHold,
     MenuOrbit,
+    ArenaFlyover,
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -160,6 +165,7 @@ fn spawn_camera(mut commands: Commands) {
 
 fn orbit_menu_cam(
     time: Res<Time>,
+    config: Res<MatchConfig>,
     mut director: ResMut<CameraDirector>,
     mut fx: ResMut<CameraPostFx>,
     mut q: Query<(&mut Transform, &mut Projection), With<GameCam>>,
@@ -172,12 +178,16 @@ fn orbit_menu_cam(
         return;
     };
     let t = time.elapsed_secs() * 0.18;
+    // Open-air arenas: orbit lower and look up so the generated world shows
+    // above the far stands; closed arenas keep the classic high court view.
+    let open_air = config.arena.theme().env_pano.is_some();
+    let (radius, height, look_y) = if open_air { (20.0, 5.8, 5.0) } else { (18.0, 9.0, 0.6) };
     let desired = clamp_cam(Vec3::new(
-        t.sin() * 18.0,
-        9.0 + t.cos() * 0.6,
-        t.cos() * 18.0,
+        t.sin() * radius,
+        height + t.cos() * 0.6,
+        t.cos() * radius,
     ));
-    let look = Vec3::new(0.0, 0.6, 0.0);
+    let look = Vec3::new(0.0, look_y, 0.0);
     smooth_cam(
         &mut tf,
         &mut proj,
@@ -238,6 +248,19 @@ fn emit_cam_triggers(
         Some(true) => {}
         _ => *inbound_latched = false,
     }
+}
+
+/// Cut to the establishing crane shot when a match starts in an open-air arena.
+fn open_with_flyover(
+    config: Res<MatchConfig>,
+    mut director: ResMut<CameraDirector>,
+    mut fx: ResMut<CameraPostFx>,
+) {
+    if config.arena.theme().env_pano.is_none() {
+        return;
+    }
+    director.hold = 0.0;
+    cut_to(&mut director, &mut fx, CameraShot::ArenaFlyover, HOLD_FLYOVER, 0.0, 0.0);
 }
 
 fn follow_game_cam(
@@ -444,6 +467,7 @@ fn follow_game_cam(
         .or(celebrate_actor)
         .unwrap_or(hero_pos);
 
+    let phase = (1.0 - director.hold / HOLD_FLYOVER).clamp(0.0, 1.0);
     let frame = frame_shot(
         director.active,
         look_live,
@@ -451,6 +475,7 @@ fn follow_game_cam(
         ball_pos,
         hoop_focus,
         time.elapsed_secs(),
+        phase,
     );
     smooth_cam(
         &mut ctf,
@@ -628,6 +653,7 @@ fn shot_priority(shot: CameraShot) -> u8 {
         CameraShot::NetSnap | CameraShot::ReplayEnglish | CameraShot::CelebrateHold => 100,
         CameraShot::DunkTakeoff | CameraShot::PosterCine => 90,
         CameraShot::BuzzerBeat => 80,
+        CameraShot::ArenaFlyover => 75,
         CameraShot::BlockReject => 70,
         CameraShot::StealPunch => 65,
         CameraShot::InboundBaseline => 55,
@@ -658,6 +684,7 @@ fn frame_shot(
     ball: Vec3,
     hoop: Vec3,
     t: f32,
+    phase: f32,
 ) -> ShotFrame {
     let hoop_sign = if hoop.x.abs() < 0.1 {
         1.0
@@ -805,6 +832,23 @@ fn frame_shot(
             1.8,
             2.2,
         ),
+        CameraShot::ArenaFlyover => {
+            // Starts low at centre court aimed up over the far stands (sky dome
+            // fills the top of the frame), then cranes up and tilts down into
+            // the broadcast sideline framing as the hold runs out.
+            let k = phase * phase * (3.0 - 2.0 * phase);
+            let from_pos = Vec3::new(-4.0, 4.6, 7.5);
+            let to_pos = Vec3::new(look.x * 0.55, 6.9, 11.8);
+            let from_look = Vec3::new(2.0, 30.0, -30.0);
+            let to_look = look + Vec3::Y * 0.3;
+            (
+                from_pos.lerp(to_pos, k),
+                from_look.lerp(to_look, k),
+                58.0 - 12.0 * k,
+                1.2,
+                1.4,
+            )
+        }
     };
     ShotFrame {
         pos: clamp_cam(pos),
@@ -822,6 +866,7 @@ fn tick_post_fx(fx: &mut CameraPostFx, shot: CameraShot, dt: f32) {
         CameraShot::CelebrateHold | CameraShot::BuzzerBeat => 0.55,
         CameraShot::DunkTakeoff => 0.42,
         CameraShot::StealPunch | CameraShot::BlockReject => 0.28,
+        CameraShot::ArenaFlyover => 0.35,
         CameraShot::MenuOrbit => 0.12,
         _ => 0.0,
     };
