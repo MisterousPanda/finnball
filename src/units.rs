@@ -2279,17 +2279,20 @@ fn update_face_expr(
     time: Res<Time>,
     paused: Res<Paused>,
     ball: Query<(&Transform, &BallState), With<Ball>>,
-    mut players: Query<(
-        &Transform,
-        &Pose,
-        &FaceRig,
-        &mut FaceExpr,
-        &Heat,
-        &Stamina,
-        &mut AnimState,
-        &Rig,
-    )>,
-    mut xforms: Query<&mut Transform, Without<Player>>,
+    mut players: Query<
+        (
+            &Transform,
+            &Pose,
+            &FaceRig,
+            &mut FaceExpr,
+            &Heat,
+            &Stamina,
+            &mut AnimState,
+            &Rig,
+        ),
+        With<Player>,
+    >,
+    mut xforms: Query<&mut Transform, (Without<Player>, Without<Ball>)>,
 ) {
     if paused.0 {
         return;
@@ -2737,6 +2740,63 @@ mod tests {
         let back = decal_pixels(CharacterId::JinGravity, true);
         let back_white = back.chunks(4).filter(|p| p[0] == 255 && p[3] == 255).count();
         assert!(back_white > white);
+    }
+
+    /// Runs the rig animation headless for `frames` with a ball held by the player.
+    fn animate_holding(id: CharacterId, frames: usize) -> (World, Entity) {
+        let (mut world, root) = spawn_in_world(id);
+        world.insert_resource(Paused(false));
+        let mut time = Time::<()>::default();
+        time.advance_by(std::time::Duration::from_millis(16));
+        world.insert_resource(time);
+        world.spawn((
+            Ball,
+            BallState {
+                hold: Hold::Held,
+                holder: Some(root),
+                shooter: None,
+                last_touch: None,
+                last_passer: None,
+                dribble_phase: 0.0,
+                rim_hits: 0,
+                release_was_three: false,
+            },
+            // Ball at the right hand, waist high, in front (-Z).
+            Transform::from_xyz(0.46, 0.6, -0.22),
+        ));
+        for _ in 0..frames {
+            world.run_system_once(animate_rigs).expect("animate runs");
+            let mut t = world.resource_mut::<Time<()>>();
+            t.advance_by(std::time::Duration::from_millis(16));
+        }
+        (world, root)
+    }
+
+    fn hanging_dir(world: &World, pivot: Entity) -> Vec3 {
+        world.get::<Transform>(pivot).unwrap().rotation * Vec3::NEG_Y
+    }
+
+    #[test]
+    fn idle_ball_handler_keeps_arms_forward_and_dribbles_right() {
+        let (world, root) = animate_holding(CharacterId::KaitoFlash, 90);
+        let rig = world.get::<Rig>(root).unwrap();
+        let l = hanging_dir(&world, rig.l_arm);
+        let r = hanging_dir(&world, rig.r_arm);
+        // Forward is -Z: both upper arms swing forward, never back or out sideways.
+        assert!(l.z < -0.2, "left upper arm forward, got {l}");
+        assert!(r.z < -0.05, "right (dribble) arm forward, got {r}");
+        assert!(l.x.abs() < 0.35 && r.x.abs() < 0.35, "arms stay in the sagittal plane: {l} {r}");
+        // Elbows fold forward too.
+        let le = hanging_dir(&world, rig.l_elbow);
+        assert!(le.z < -0.5, "left forearm folds forward, got {le}");
+        // Knees fold backward (+Z) and the head looks toward the ball (down, right).
+        let lk = hanging_dir(&world, rig.l_knee);
+        assert!(lk.z > 0.05, "shin swings back when the knee bends, got {lk}");
+        let head = world.get::<Transform>(rig.head).unwrap().rotation * Vec3::NEG_Z;
+        assert!(head.y < -0.1 && head.x > 0.05, "head tracks the ball, got {head}");
+        // Scale stays uniform-ish and finite.
+        let tf = world.get::<Transform>(root).unwrap();
+        assert!(tf.scale.is_finite() && (tf.scale.y / tf.scale.x - 1.0).abs() < 0.1);
     }
 
     #[test]
