@@ -348,10 +348,12 @@ impl Batch {
         );
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn vertex_count(&self) -> usize {
         self.pos.len()
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn index_count(&self) -> usize {
         self.idx.len()
     }

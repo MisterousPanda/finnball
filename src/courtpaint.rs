@@ -516,6 +516,7 @@ impl Canvas {
         self.rgba[i + 3] = alpha;
     }
 
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn pixel(&self, x: i32, y: i32) -> [u8; 4] {
         let x = x.clamp(0, self.width as i32 - 1) as u32;
         let y = y.clamp(0, self.height as i32 - 1) as u32;
@@ -548,6 +549,7 @@ impl Canvas {
     }
 
     /// Horizontal gradient band from `a` to `b`.
+    #[allow(dead_code)]
     pub fn gradient(&mut self, x: i32, y: i32, w: i32, h: i32, a: [f32; 3], b: [f32; 3]) {
         for xx in x.max(0)..(x + w).min(self.width as i32) {
             let t = (xx - x) as f32 / w.max(1) as f32;
