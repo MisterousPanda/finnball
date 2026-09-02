@@ -662,7 +662,9 @@ pub fn fan_with(
     } else {
         Prop::None
     };
-    let arms_up = opts.cheer || standing || prop == Prop::Sign || rng.chance(0.16);
+    // Standing fans celebrate with both arms up; staff (ushers, camera crews) keep
+    // theirs down.
+    let arms_up = opts.cheer || (standing && !opts.cap) || prop == Prop::Sign || rng.chance(0.16);
     let hair = if opts.cap {
         Hair::Cap
     } else if kid {
@@ -1502,7 +1504,9 @@ mod tests {
         let b = build();
         assert_eq!(a.vertex_count(), b.vertex_count());
         // Full-variety fans stay well under 1k vertices each on average.
-        assert!(a.vertex_count() / 200 < 900, "avg {}", a.vertex_count() / 200);
+        let avg = a.vertex_count() / 200;
+        println!("average vertices per fan: {avg}");
+        assert!(avg < 900, "avg {avg}");
         assert_eq!(a.index_count() % 3, 0);
     }
 

@@ -96,6 +96,7 @@ impl Plugin for CourtPlugin {
                     update_jumbotron,
                     sweep_spotlights,
                     bounce_mascot,
+                    hide_jumbotron_from_above,
                 ),
             );
     }
@@ -138,6 +139,11 @@ struct SweepCone {
     phase: f32,
     fade: f32,
 }
+
+/// Center-hung jumbotron parts; hidden when the camera rises above them (tactical
+/// top-down) so the cube does not blot out the court.
+#[derive(Component)]
+struct Jumbotron;
 
 #[derive(Component)]
 struct Mascot {
@@ -285,15 +291,17 @@ fn to_arr(c: Color) -> [f32; 3] {
     [s.red, s.green, s.blue]
 }
 
+/// Spawns one merged crowd/deco mesh; returns its vertex count for the build log.
 fn spawn_batch(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     batch: Batch,
     mat: &Handle<CrowdMaterial>,
-) {
+) -> usize {
     if batch.is_empty() {
-        return;
+        return 0;
     }
+    let verts = batch.vertex_count();
     commands.spawn((
         ArenaRoot,
         CrowdSection,
@@ -301,6 +309,7 @@ fn spawn_batch(
         MeshMaterial3d(mat.clone()),
         Transform::IDENTITY,
     ));
+    verts
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -534,7 +543,8 @@ fn build_arena(
 
     // --- stands + crowd + courtside
     let bowl = spawn_stands(commands, meshes, &crowd_mat, &parts, &mut deco, theme);
-    spawn_courtside(
+    let mut merged_verts = bowl.verts;
+    merged_verts += spawn_courtside(
         commands,
         meshes,
         materials,
@@ -697,6 +707,7 @@ fn build_arena(
     });
     commands.spawn((
         ArenaRoot,
+        Jumbotron,
         Mesh3d(meshes.add(Cuboid::new(7.2, 4.0, 7.2))),
         MeshMaterial3d(slab_mat.clone()),
         Transform::from_xyz(0.0, cube_y, 0.0),
@@ -712,6 +723,7 @@ fn build_arena(
     }
     commands.spawn((
         ArenaRoot,
+        Jumbotron,
         Mesh3d(meshes.add(screens_mesh.build())),
         MeshMaterial3d(screen_mat),
         Transform::IDENTITY,
@@ -719,18 +731,21 @@ fn build_arena(
     // LED under-ring + accent trim
     commands.spawn((
         ArenaRoot,
+        Jumbotron,
         Mesh3d(meshes.add(Cuboid::new(7.4, 0.25, 7.4))),
         MeshMaterial3d(neon.clone()),
         Transform::from_xyz(0.0, cube_y - 2.1, 0.0),
     ));
     commands.spawn((
         ArenaRoot,
+        Jumbotron,
         Mesh3d(meshes.add(Cuboid::new(7.4, 0.12, 7.4))),
         MeshMaterial3d(neon.clone()),
         Transform::from_xyz(0.0, cube_y + 2.05, 0.0),
     ));
     commands.spawn((
         ArenaRoot,
+        Jumbotron,
         HoloSpin,
         Mesh3d(meshes.add(Torus {
             minor_radius: 0.12,
@@ -751,6 +766,7 @@ fn build_arena(
     }
     commands.spawn((
         ArenaRoot,
+        Jumbotron,
         HoloSpin,
         Mesh3d(meshes.add(crest_ring.build())),
         MeshMaterial3d(banner_mat.clone()),
@@ -758,6 +774,7 @@ fn build_arena(
     ));
     commands.spawn((
         ArenaRoot,
+        Jumbotron,
         Mesh3d(meshes.add(Cylinder::new(0.12, 6.0))),
         MeshMaterial3d(pole_mat.clone()),
         Transform::from_xyz(0.0, cube_y + 5.0, 0.0),
@@ -771,7 +788,7 @@ fn build_arena(
         0.55 + 0.45 * em.red / em_max,
         0.55 + 0.45 * em.green / em_max,
         0.55 + 0.45 * em.blue / em_max,
-        0.045,
+        0.014,
     );
     let cone_mat = materials.add(StandardMaterial {
         base_color: Color::from(beam_tint),
@@ -914,13 +931,18 @@ fn build_arena(
         }
     }
 
-    spawn_batch(commands, meshes, deco, &crowd_mat);
+    merged_verts += spawn_batch(commands, meshes, deco, &crowd_mat);
+    info!(
+        "arena '{}' built: {} vertices in merged crowd/deco meshes ({} lower tiers, {} upper rows)",
+        theme.name, merged_verts, TIERS, UPPER_ROWS
+    );
 }
 
 /// Layout facts the rafters need from the bowl.
 struct BowlInfo {
     top_y: f32,
     far: f32,
+    verts: usize,
 }
 
 fn near_aisle(coord: f32) -> bool {
@@ -1226,13 +1248,14 @@ fn spawn_stands(
         );
     }
 
+    let mut verts = 0;
     for batches in side_batches {
         for b in batches {
-            spawn_batch(commands, meshes, b, crowd_mat);
+            verts += spawn_batch(commands, meshes, b, crowd_mat);
         }
     }
     for b in end_batches {
-        spawn_batch(commands, meshes, b, crowd_mat);
+        verts += spawn_batch(commands, meshes, b, crowd_mat);
     }
 
     // --- suite level: glass boxes with warm light and silhouettes
@@ -1443,9 +1466,9 @@ fn spawn_stands(
             }
         }
     }
-    spawn_batch(commands, meshes, upper, crowd_mat);
+    verts += spawn_batch(commands, meshes, upper, crowd_mat);
 
-    BowlInfo { top_y, far }
+    BowlInfo { top_y, far, verts }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1460,7 +1483,7 @@ fn spawn_courtside(
     ribbon_tex: &Handle<Image>,
     theme: &ArenaTheme,
     slab_mat: &Handle<StandardMaterial>,
-) {
+) -> usize {
     let mut rng = Lcg(0xC0A5_71DE);
     let home = crate::roster::Side::Home;
     let away = crate::roster::Side::Away;
@@ -1785,7 +1808,7 @@ fn spawn_courtside(
         ));
     }
 
-    spawn_batch(commands, meshes, batch, crowd_mat);
+    spawn_batch(commands, meshes, batch, crowd_mat)
 }
 
 fn spawn_referee(
@@ -2197,19 +2220,22 @@ fn update_jumbotron(
         }
         _ => {}
     }
-    // Skip the repaint when nothing but the animation phase changed and the board is
-    // static (live boards animate the hype meter / blinking clock, so always repaint).
-    if data.headline.is_empty() || screens.last.as_ref().map(|l| {
-        let mut a = l.clone();
-        a.t = data.t;
-        a != data
-    }).unwrap_or(true) || (t * 2.0).fract() < 0.6 {
-        if let Some(img) = images.get_mut(&handle) {
-            let painted = paint_scoreboard(SCREEN_W, SCREEN_H, &data);
-            img.data = Some(painted.rgba);
-        }
-        screens.last = Some(data);
+    // Static headline boards only repaint when their text changes; live boards animate
+    // (hype meter, blinking clock) so they repaint every refresh tick.
+    let static_board = !data.headline.is_empty();
+    let unchanged = screens.last.as_ref().is_some_and(|l| {
+        let mut probe = l.clone();
+        probe.t = data.t;
+        probe == data
+    });
+    if static_board && unchanged && (t * 0.5).fract() > 0.2 {
+        return;
     }
+    if let Some(img) = images.get_mut(&handle) {
+        let painted = paint_scoreboard(SCREEN_W, SCREEN_H, &data);
+        img.data = Some(painted.rgba);
+    }
+    screens.last = Some(data);
 }
 
 /// Spotlight beams sweep the bowl during menus and whenever a player is on fire /
@@ -2242,6 +2268,27 @@ fn sweep_spotlights(
         tf.translation = cone.pos + dir * half;
         tf.rotation = Quat::from_rotation_arc(Vec3::Y, -dir);
         tf.scale = Vec3::new(cone.fade, 1.0, cone.fade);
+    }
+}
+
+/// The tactical top-down camera sits above the jumbotron; hide the cube so it does not
+/// cover center court from that angle.
+fn hide_jumbotron_from_above(
+    cam: Query<&Transform, With<crate::camera::GameCam>>,
+    mut parts: Query<&mut Visibility, With<Jumbotron>>,
+) {
+    let Ok(cam) = cam.single() else {
+        return;
+    };
+    let want = if cam.translation.y > 14.0 {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
+    for mut v in &mut parts {
+        if *v != want {
+            *v = want;
+        }
     }
 }
 
