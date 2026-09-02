@@ -8,7 +8,7 @@ repository = "https://github.com/MisterousPanda/finnball"
 default-run = "finnball"
 
 [dependencies]
-bevy = { version = "0.18.1", features = ["wav"] }
+bevy = { version = "0.18.1", features = ["wav", "jpeg"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1"

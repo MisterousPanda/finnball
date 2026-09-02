@@ -42,6 +42,7 @@ impl ArenaId {
                 ribbon_words: &["FINNBALL", "NEO-TOKYO DOME", "NEON FOXES", "SHADOW CRANES", "SHIBUYA NIGHTS"],
                 suite_glow: Color::srgb(0.3, 0.8, 1.0),
                 sky: Color::srgb(0.015, 0.02, 0.05),
+                env_pano: env_pano_for(self),
             },
             Self::ToonWorld => ArenaTheme {
                 id: self,
@@ -65,6 +66,7 @@ impl ArenaId {
                 ribbon_words: &["FINNBALL", "TOON WORLD ARENA", "NEON FOXES", "SHADOW CRANES", "THAT'S ALL FOLKS"],
                 suite_glow: Color::srgb(1.0, 0.85, 0.4),
                 sky: Color::srgb(0.45, 0.75, 1.0),
+                env_pano: env_pano_for(self),
             },
             Self::SkyTemple => ArenaTheme {
                 id: self,
@@ -88,6 +90,7 @@ impl ArenaId {
                 ribbon_words: &["FINNBALL", "SKY TEMPLE COURT", "NEON FOXES", "SHADOW CRANES", "MOONLIGHT LEAGUE"],
                 suite_glow: Color::srgb(1.0, 0.6, 0.8),
                 sky: Color::srgb(0.04, 0.03, 0.12),
+                env_pano: env_pano_for(self),
             },
             Self::Underground => ArenaTheme {
                 id: self,
@@ -111,6 +114,7 @@ impl ArenaId {
                 ribbon_words: &["FINNBALL", "UNDERGROUND CIRCUIT", "NEON FOXES", "SHADOW CRANES", "NO REFS NO RULES"],
                 suite_glow: Color::srgb(1.0, 0.75, 0.25),
                 sky: Color::srgb(0.03, 0.03, 0.025),
+                env_pano: env_pano_for(self),
             },
             Self::CrystalColiseum => ArenaTheme {
                 id: self,
@@ -134,6 +138,7 @@ impl ArenaId {
                 ribbon_words: &["FINNBALL", "CRYSTAL COLISEUM", "NEON FOXES", "SHADOW CRANES", "GG WORLDS"],
                 suite_glow: Color::srgb(0.5, 0.9, 1.0),
                 sky: Color::srgb(0.02, 0.03, 0.07),
+                env_pano: env_pano_for(self),
             },
         }
     }
@@ -167,6 +172,38 @@ pub struct ArenaTheme {
     /// Warm light spilling from the suite-level windows.
     pub suite_glow: Color,
     pub sky: Color,
+    /// Equirectangular panorama (under `assets/`) generated with World Labs
+    /// Marble for this arena. When set, the bowl is built open-air and the
+    /// panorama wraps the stadium as a sky dome. `None` keeps the closed roof.
+    pub env_pano: Option<&'static str>,
+}
+
+impl ArenaId {
+    /// Snake-case key used by `scripts/worldlabs_env.py` and `assets/env/`.
+    pub fn slug(self) -> &'static str {
+        match self {
+            ArenaId::NeoTokyo => "neo_tokyo",
+            ArenaId::ToonWorld => "toon_world",
+            ArenaId::SkyTemple => "sky_temple",
+            ArenaId::Underground => "underground",
+            ArenaId::CrystalColiseum => "crystal_coliseum",
+        }
+    }
+}
+
+/// Arenas whose World Labs panorama has been generated and committed under
+/// `assets/env/`. Run `scripts/worldlabs_env.py`, then add the slug here.
+const ENV_PANOS: &[&str] = &[];
+
+fn env_pano_for(id: ArenaId) -> Option<&'static str> {
+    let slug = id.slug();
+    ENV_PANOS.iter().find(|s| **s == slug).map(|_| match id {
+        ArenaId::NeoTokyo => "env/neo_tokyo.jpg",
+        ArenaId::ToonWorld => "env/toon_world.jpg",
+        ArenaId::SkyTemple => "env/sky_temple.jpg",
+        ArenaId::Underground => "env/underground.jpg",
+        ArenaId::CrystalColiseum => "env/crystal_coliseum.jpg",
+    })
 }
 
 impl ArenaTheme {
@@ -211,6 +248,28 @@ mod tests {
             assert!(t.ribbon_words.contains(&t.name), "{:?}", id);
             let pal = t.palette();
             assert_eq!(pal.arena_name, t.name);
+        }
+    }
+
+    #[test]
+    fn env_panos_match_committed_assets() {
+        let slugs: Vec<&str> = ArenaId::ALL.iter().map(|id| id.slug()).collect();
+        for slug in ENV_PANOS {
+            assert!(slugs.contains(slug), "unknown arena slug {slug}");
+        }
+        for id in ArenaId::ALL {
+            let expected = format!("env/{}.jpg", id.slug());
+            let on_disk = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("assets")
+                .join(&expected)
+                .exists();
+            match id.theme().env_pano {
+                Some(path) => {
+                    assert_eq!(path, expected, "{:?}", id);
+                    assert!(on_disk, "{expected} is listed in ENV_PANOS but missing from assets/");
+                }
+                None => assert!(!ENV_PANOS.contains(&id.slug())),
+            }
         }
     }
 }
