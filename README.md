@@ -58,21 +58,30 @@ Neon-speed point guards, logo snipers, rim breakers, shot-blocking eclipses, no-
 4. **Underground Circuit** — chain-net street wattage  
 5. **Crystal Coliseum** — glass esports cathedral  
 
-## Hosting on Vercel
+## Hosting (Railway)
 
-Vercel **cannot run a native Rust game server**. A Bevy sim is a long-lived GPU client, not a serverless function.
+Vercel is a poor fit for this project: it will not run a native Bevy window, and it will not compile a Bevy WASM client in a typical serverless build. **Railway** is the intended host.
 
-What *does* work: compile FINNBALL to **WebAssembly**, ship `www/` as a static site. That is what `www/vercel.json` is for.
+Railway still cannot pop a GPU window in the cloud. What it *can* do is run a tiny nginx container that serves the prebuilt **WebGL / WASM** client from `www/`.
 
-1. `./scripts/build-web.sh` (produces `www/pkg/`)
-2. Point a Vercel project at `www/` (`outputDirectory: "www"`, `framework: null`)
-3. Keep `Content-Type: application/wasm` for `*.wasm`
+```bash
+./scripts/build-web.sh          # produces www/pkg/*.wasm (gitignored, ~28MB)
+railway login && railway link   # once
+railway up                      # uploads the local www/ tree, including pkg/
+```
 
-If the wasm blob is too large for a Hobby upload, use **GitHub Releases**, **itch.io**, **Cloudflare Pages**, or **Vercel Pro** with the prebuilt `www/pkg` artifacts from CI.
+The Dockerfile + `deploy/` scripts bind nginx to Railway’s `$PORT` and set `Content-Type: application/wasm`. `www/pkg` is gitignored on purpose — do not let Railpack compile the Bevy crate; there is no GPU, and the compile is too large for a normal service build.
 
-### Why not compile Rust on Vercel?
+Open **https://finnball-production.up.railway.app** in a WebGL2 browser.
 
-Bevy release wasm takes many minutes and a full `rustc` + `wasm-bindgen` toolchain. Vercel’s default builders do not include that. Prebuild locally or in GitHub Actions, then deploy the static output.
+### Other options
+
+- Native desktop: `cargo run --release` (needs a GPU)
+- itch.io / GitHub Releases: ship the WASM zip or native binaries
+- Cloudflare Pages: same static `www/` folder if you do not want a container
+
+Vercel can still serve `www/` as static files if you prebuild WASM, but Railway is the path this repo is wired for.
+
 
 ## Architecture
 
