@@ -21,18 +21,22 @@ enum Action {
     Quit,
 }
 
-fn setup(mut commands: Commands) {
+fn setup(mut commands: Commands, windows: Query<&Window>) {
+    // Phones in landscape are ~400 logical px tall; scale the stack so every
+    // button stays on screen instead of falling off the bottom.
+    let h = windows.single().map(|w| w.height()).unwrap_or(900.0);
+    let s = (h / 900.0).clamp(0.5, 1.0);
     commands.spawn((
         DespawnOnExit(AppState::MainMenu),
         Node {
             width: percent(100),
             height: percent(100),
-            padding: UiRect::all(px(40)),
+            padding: UiRect::axes(px(40.0 * s), px(16.0 + 24.0 * s)),
             flex_direction: FlexDirection::Column,
             justify_content: JustifyContent::SpaceBetween,
             ..default()
         },
-        children![top_bar(), center_stack(), footer(),],
+        children![top_bar(), center_stack(s), footer(),],
     ));
 }
 
@@ -59,30 +63,30 @@ fn top_bar() -> impl Bundle {
     )
 }
 
-fn center_stack() -> impl Bundle {
+fn center_stack(s: f32) -> impl Bundle {
     (
         Node {
             width: percent(100),
             flex_direction: FlexDirection::Column,
             align_items: AlignItems::FlexStart,
-            row_gap: px(4),
+            row_gap: px(4.0 * s),
             ..default()
         },
         children![
-            (Text::new("FINNBALL"), title_font(84.0), TextColor(CYAN),),
+            (Text::new("FINNBALL"), title_font(84.0 * s), TextColor(CYAN),),
             (
                 Text::new("TOON PHYSICS. ANIME HEART. ESPORTS FRAME."),
-                title_font(18.0),
+                title_font(18.0 * s.max(0.75)),
                 TextColor(MAGENTA),
                 Node {
-                    margin: UiRect::bottom(px(18)),
+                    margin: UiRect::bottom(px(18.0 * s)),
                     ..default()
                 },
             ),
-            menu_btn("QUICK MATCH  3v3", Action::Quick),
-            menu_btn("EXHIBITION  DRAFT + COURT", Action::Exhibition),
-            menu_btn("PRACTICE  GYM", Action::Practice),
-            menu_btn("QUIT", Action::Quit),
+            menu_btn("QUICK MATCH  3v3", Action::Quick, s),
+            menu_btn("EXHIBITION  DRAFT + COURT", Action::Exhibition, s),
+            menu_btn("PRACTICE  GYM", Action::Practice, s),
+            menu_btn("QUIT", Action::Quit, s),
             (
                 Text::new("ENTER / SPACE  QUICK MATCH   •   2  EXHIBITION   •   G  GYM   •   PAD: A PLAY  X DRAFT  Y GYM"),
                 title_font(12.0),
@@ -96,15 +100,18 @@ fn center_stack() -> impl Bundle {
     )
 }
 
-fn menu_btn(label: &'static str, action: Action) -> impl Bundle {
+fn menu_btn(label: &'static str, action: Action, s: f32) -> impl Bundle {
+    let mut node = button_node();
+    node.height = px(56.0 * s.max(0.7));
+    node.margin = UiRect::all(px(8.0 * s));
     (
         Button,
         MenuBtn,
         action,
-        button_node(),
+        node,
         BackgroundColor(crate::theme::BTN),
         BorderColor::all(CYAN.with_alpha(0.4)),
-        children![(Text::new(label), title_font(20.0), TextColor(TEXT))],
+        children![(Text::new(label), title_font(20.0 * s.max(0.8)), TextColor(TEXT))],
     )
 }
 
