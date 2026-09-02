@@ -208,7 +208,7 @@ impl CharacterId {
                 block: 84,
                 rebound: 99,
                 strength: 99,
-                hair: HairStyle::Bandana,
+                hair: HairStyle::Afro,
                 hair_color: Color::srgb(0.2, 0.12, 0.08),
                 skin: Color::srgb(0.72, 0.5, 0.36),
                 accent: Color::srgb(0.9, 0.2, 0.2),
@@ -254,7 +254,7 @@ impl CharacterId {
                 block: 48,
                 rebound: 60,
                 strength: 80,
-                hair: HairStyle::Lightning,
+                hair: HairStyle::Mohawk,
                 hair_color: Color::srgb(1.0, 0.9, 0.2),
                 skin: Color::srgb(0.9, 0.74, 0.6),
                 accent: Color::srgb(1.0, 0.85, 0.1),
@@ -264,18 +264,184 @@ impl CharacterId {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HairStyle {
+    /// Upswept anime spikes fanning back from the hairline.
     Spikes,
+    /// Two swinging tails tied high on the head.
     TwinTails,
+    /// Tight buzz cut hugging the skull.
     Buzz,
+    /// Long straight curtain with swept bangs.
     Long,
+    /// High ponytail with a swinging tail.
     Ponytail,
+    /// Messy layered mop with swept bangs.
     Messy,
+    /// Chin-length bob with a fringe.
     Bob,
-    Bandana,
+    /// Round afro worn over a bandana.
+    Afro,
+    /// Twin corkscrew drills hanging past the shoulders.
     Drills,
-    Lightning,
+    /// Tall lightning-shaped mohawk.
+    Mohawk,
+}
+
+/// Which limbs a piece of kit is worn on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wear {
+    None,
+    Left,
+    Right,
+    Both,
+}
+
+impl Wear {
+    /// `sx` is -1 for the left limb and +1 for the right one.
+    pub fn on(self, sx: f32) -> bool {
+        match self {
+            Wear::None => false,
+            Wear::Left => sx < 0.0,
+            Wear::Right => sx > 0.0,
+            Wear::Both => true,
+        }
+    }
+}
+
+/// Cosmetic loadout: compression gear, ink, socks and the shoe colorway.
+#[derive(Clone, Copy, Debug)]
+pub struct Kit {
+    pub arm_sleeve: Wear,
+    pub knee_sleeve: Wear,
+    pub tattoo: Wear,
+    pub tights: bool,
+    pub headband: bool,
+    pub high_socks: bool,
+    pub shoe_primary: Color,
+    pub shoe_secondary: Color,
+    /// 0 = fist pump, 1 = double-bicep flex, 2 = point to the crowd.
+    pub celebration: u8,
+}
+
+impl CharacterId {
+    pub fn kit(self) -> Kit {
+        let p = self.profile();
+        let white = Color::srgb(0.96, 0.96, 0.94);
+        let black = Color::srgb(0.08, 0.08, 0.1);
+        match self {
+            Self::KaitoFlash => Kit {
+                arm_sleeve: Wear::Right,
+                knee_sleeve: Wear::None,
+                tattoo: Wear::None,
+                tights: false,
+                headband: true,
+                high_socks: false,
+                shoe_primary: p.accent,
+                shoe_secondary: white,
+                celebration: 0,
+            },
+            Self::MikaOrbit => Kit {
+                arm_sleeve: Wear::None,
+                knee_sleeve: Wear::Left,
+                tattoo: Wear::None,
+                tights: true,
+                headband: false,
+                high_socks: false,
+                shoe_primary: white,
+                shoe_secondary: p.accent,
+                celebration: 2,
+            },
+            Self::JinGravity => Kit {
+                arm_sleeve: Wear::None,
+                knee_sleeve: Wear::None,
+                tattoo: Wear::Both,
+                tights: false,
+                headband: true,
+                high_socks: false,
+                shoe_primary: black,
+                shoe_secondary: p.accent,
+                celebration: 1,
+            },
+            Self::ReiWall => Kit {
+                arm_sleeve: Wear::Both,
+                knee_sleeve: Wear::None,
+                tattoo: Wear::None,
+                tights: false,
+                headband: false,
+                high_socks: true,
+                shoe_primary: black,
+                shoe_secondary: p.accent,
+                celebration: 1,
+            },
+            Self::YunaSilk => Kit {
+                arm_sleeve: Wear::None,
+                knee_sleeve: Wear::Right,
+                tattoo: Wear::None,
+                tights: false,
+                headband: true,
+                high_socks: false,
+                shoe_primary: p.accent,
+                shoe_secondary: white,
+                celebration: 2,
+            },
+            Self::ZeroGhost => Kit {
+                arm_sleeve: Wear::Left,
+                knee_sleeve: Wear::None,
+                tattoo: Wear::Right,
+                tights: true,
+                headband: false,
+                high_socks: false,
+                shoe_primary: black,
+                shoe_secondary: p.accent,
+                celebration: 0,
+            },
+            Self::LunaEclipse => Kit {
+                arm_sleeve: Wear::None,
+                knee_sleeve: Wear::Both,
+                tattoo: Wear::None,
+                tights: true,
+                headband: false,
+                high_socks: false,
+                shoe_primary: p.accent,
+                shoe_secondary: black,
+                celebration: 2,
+            },
+            Self::TaroTitan => Kit {
+                arm_sleeve: Wear::None,
+                knee_sleeve: Wear::Both,
+                tattoo: Wear::Both,
+                tights: false,
+                headband: true,
+                high_socks: true,
+                shoe_primary: p.accent,
+                shoe_secondary: white,
+                celebration: 1,
+            },
+            Self::AikoPrism => Kit {
+                arm_sleeve: Wear::None,
+                knee_sleeve: Wear::Left,
+                tattoo: Wear::None,
+                tights: false,
+                headband: false,
+                high_socks: true,
+                shoe_primary: white,
+                shoe_secondary: p.accent,
+                celebration: 2,
+            },
+            Self::KenjiVolt => Kit {
+                arm_sleeve: Wear::Right,
+                knee_sleeve: Wear::None,
+                tattoo: Wear::Left,
+                tights: false,
+                headband: true,
+                high_socks: false,
+                shoe_primary: black,
+                shoe_secondary: p.accent,
+                celebration: 0,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -361,5 +527,23 @@ mod tests {
     #[test]
     fn sniper_has_elite_three() {
         assert!(CharacterId::MikaOrbit.profile().three >= 95);
+    }
+
+    #[test]
+    fn wear_sides_resolve() {
+        assert!(Wear::Both.on(-1.0) && Wear::Both.on(1.0));
+        assert!(Wear::Left.on(-1.0) && !Wear::Left.on(1.0));
+        assert!(!Wear::Right.on(-1.0) && Wear::Right.on(1.0));
+        assert!(!Wear::None.on(-1.0) && !Wear::None.on(1.0));
+    }
+
+    #[test]
+    fn every_character_has_a_kit_and_distinct_hair() {
+        let mut hair: Vec<_> = CharacterId::ALL.iter().map(|c| c.profile().hair).collect();
+        hair.dedup();
+        assert_eq!(hair.len(), 10, "each character wears a unique hairstyle");
+        for c in CharacterId::ALL {
+            assert!(c.kit().celebration <= 2);
+        }
     }
 }
