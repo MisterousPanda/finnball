@@ -61,6 +61,23 @@ Neon-speed point guards, logo snipers, rim breakers, shot-blocking eclipses, no-
 4. **Underground Circuit** — chain-net street wattage  
 5. **Crystal Coliseum** — glass esports cathedral  
 
+### World Labs environments
+
+Each arena can be wrapped in a 3D world generated with
+[World Labs Marble](https://docs.worldlabs.ai/api). `scripts/worldlabs_env.py`
+prompts Marble for one world per arena, downloads its 360° panorama into
+`assets/env/<arena>.jpg` and records the world ids in `assets/env/worlds.json`.
+Arenas listed in `ENV_PANOS` (`src/arenas.rs`) are then built open-air: a shallow
+upper tier and a truss ring instead of the closed roof, with the panorama as a sky
+dome, plus a tip-off crane shot over the bowl.
+
+```bash
+pip install requests pillow
+WLT_API_KEY=... python3 scripts/worldlabs_env.py            # all five arenas
+WLT_API_KEY=... python3 scripts/worldlabs_env.py sky_temple  # one arena
+WLT_API_KEY=... python3 scripts/worldlabs_env.py --mesh      # also HQ GLB (Pro plan)
+```
+
 ## Hosting (Railway)
 
 Vercel is a poor fit for this project: it will not run a native Bevy window, and it will not compile a Bevy WASM client in a typical serverless build. **Railway** is the intended host.
