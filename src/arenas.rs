@@ -36,6 +36,11 @@ impl ArenaId {
                 bounce: 0.72,
                 hangtime: 1.0,
                 crowd: Color::srgb(0.08, 0.12, 0.22),
+                roof: Color::srgb(0.02, 0.03, 0.06),
+                banner_years: &["2088", "2091", "2093", "2094", "2097"],
+                retired: &[("7", "AKIRA"), ("23", "HANA"), ("0", "GHOST")],
+                ribbon_words: &["FINNBALL", "NEO-TOKYO DOME", "NEON FOXES", "SHADOW CRANES", "SHIBUYA NIGHTS"],
+                suite_glow: Color::srgb(0.3, 0.8, 1.0),
                 sky: Color::srgb(0.015, 0.02, 0.05),
             },
             Self::ToonWorld => ArenaTheme {
@@ -54,6 +59,11 @@ impl ArenaId {
                 bounce: 0.88,
                 hangtime: 1.22,
                 crowd: Color::srgb(0.85, 0.25, 0.55),
+                roof: Color::srgb(0.55, 0.8, 1.0),
+                banner_years: &["1940", "1953", "1966", "1988", "1996"],
+                retired: &[("1", "BUGS"), ("99", "DUCK"), ("33", "TAZ")],
+                ribbon_words: &["FINNBALL", "TOON WORLD ARENA", "NEON FOXES", "SHADOW CRANES", "THAT'S ALL FOLKS"],
+                suite_glow: Color::srgb(1.0, 0.85, 0.4),
                 sky: Color::srgb(0.45, 0.75, 1.0),
             },
             Self::SkyTemple => ArenaTheme {
@@ -72,6 +82,11 @@ impl ArenaId {
                 bounce: 0.7,
                 hangtime: 1.12,
                 crowd: Color::srgb(0.22, 0.1, 0.18),
+                roof: Color::srgb(0.05, 0.03, 0.12),
+                banner_years: &["1603", "1868", "1964", "2020", "2025"],
+                retired: &[("5", "SAKURA"), ("11", "TSUKI"), ("77", "KAGE")],
+                ribbon_words: &["FINNBALL", "SKY TEMPLE COURT", "NEON FOXES", "SHADOW CRANES", "MOONLIGHT LEAGUE"],
+                suite_glow: Color::srgb(1.0, 0.6, 0.8),
                 sky: Color::srgb(0.04, 0.03, 0.12),
             },
             Self::Underground => ArenaTheme {
@@ -90,6 +105,11 @@ impl ArenaId {
                 bounce: 0.64,
                 hangtime: 0.96,
                 crowd: Color::srgb(0.12, 0.12, 0.1),
+                roof: Color::srgb(0.04, 0.04, 0.035),
+                banner_years: &["1979", "1984", "1991", "2004", "2016"],
+                retired: &[("13", "REBEL"), ("44", "KING"), ("8", "WIRE")],
+                ribbon_words: &["FINNBALL", "UNDERGROUND CIRCUIT", "NEON FOXES", "SHADOW CRANES", "NO REFS NO RULES"],
+                suite_glow: Color::srgb(1.0, 0.75, 0.25),
                 sky: Color::srgb(0.03, 0.03, 0.025),
             },
             Self::CrystalColiseum => ArenaTheme {
@@ -108,6 +128,11 @@ impl ArenaId {
                 bounce: 0.74,
                 hangtime: 1.04,
                 crowd: Color::srgb(0.08, 0.1, 0.18),
+                roof: Color::srgb(0.03, 0.05, 0.1),
+                banner_years: &["2019", "2021", "2022", "2024", "2026"],
+                retired: &[("1", "PRISM"), ("10", "NOVA"), ("42", "GLITCH")],
+                ribbon_words: &["FINNBALL", "CRYSTAL COLISEUM", "NEON FOXES", "SHADOW CRANES", "GG WORLDS"],
+                suite_glow: Color::srgb(0.5, 0.9, 1.0),
                 sky: Color::srgb(0.02, 0.03, 0.07),
             },
         }
@@ -131,6 +156,16 @@ pub struct ArenaTheme {
     pub bounce: f32,
     pub hangtime: f32,
     pub crowd: Color,
+    /// Roof / ceiling colour above the rafters.
+    pub roof: Color,
+    /// Championship years hung from the truss.
+    pub banner_years: &'static [&'static str],
+    /// Retired numbers: (number, player name).
+    pub retired: &'static [(&'static str, &'static str)],
+    /// Words that scroll around the LED ribbon boards.
+    pub ribbon_words: &'static [&'static str],
+    /// Warm light spilling from the suite-level windows.
+    pub suite_glow: Color,
     pub sky: Color,
 }
 
@@ -147,6 +182,11 @@ impl ArenaTheme {
             paint: c(self.paint),
             accent: c(self.accent),
             apron: c(self.apron),
+            arena_name: self.name,
+            home_name: crate::roster::Side::Home.label(),
+            away_name: crate::roster::Side::Away.label(),
+            home_color: c(crate::roster::Side::Home.primary()),
+            away_color: c(crate::roster::Side::Away.primary()),
         }
     }
 }
@@ -159,5 +199,18 @@ mod tests {
     fn five_unique_arenas() {
         assert_eq!(ArenaId::ALL.len(), 5);
         assert!(ArenaId::ToonWorld.theme().bounce > ArenaId::Underground.theme().bounce);
+    }
+
+    #[test]
+    fn every_arena_has_identity_dressing() {
+        for id in ArenaId::ALL {
+            let t = id.theme();
+            assert!(t.banner_years.len() >= 3, "{:?}", id);
+            assert!(t.retired.len() >= 2, "{:?}", id);
+            assert!(t.ribbon_words.contains(&"FINNBALL"), "{:?}", id);
+            assert!(t.ribbon_words.contains(&t.name), "{:?}", id);
+            let pal = t.palette();
+            assert_eq!(pal.arena_name, t.name);
+        }
     }
 }

@@ -490,7 +490,7 @@ fn spawn_stands(
             perceptual_roughness: 0.9,
             ..default()
         },
-        extension: CrowdExt { params: Vec4::ZERO },
+        extension: CrowdExt::default(),
     });
     let riser = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let step_mat = materials.add(StandardMaterial {
@@ -712,7 +712,7 @@ fn spawn_courtside(
             perceptual_roughness: 0.85,
             ..default()
         },
-        extension: CrowdExt { params: Vec4::ZERO },
+        extension: CrowdExt::default(),
     });
     let floor_seat_z = PLANE_HALF_WID - 0.55;
 
