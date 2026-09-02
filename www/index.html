@@ -159,11 +159,11 @@
         }
       } catch (err) {
         console.error(err);
-        if (window.__finnballHeal && /__wbindgen|is not a function|LinkError|CompileError/i.test(String(err))) {
+        const stale =
+          window.__finnballHeal && /__wbindgen|is not a function|LinkError|CompileError/i.test(String(err));
+        if (stale) {
           await window.__finnballHeal(String(err));
-          return;
-        }
-        if (boot) {
+        } else if (boot) {
           boot.innerHTML = `
             <h1>FINNBALL</h1>
             <p>WEB BUILD NOT ATTACHED YET</p>
