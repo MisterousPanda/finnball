@@ -456,6 +456,8 @@ struct LoopLayer {
     level: f32,
     target: f32,
     speed: f32,
+    /// Fading out for good; despawned by the mixer once silent.
+    retiring: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -538,19 +540,19 @@ impl Sfx<'_, '_> {
     }
 
     fn has_loop(&self, kind: LoopKind) -> bool {
-        self.loops.iter().any(|(_, l)| l.kind == kind) || self.mix.spawned_loops.contains(&kind)
+        self.loops
+            .iter()
+            .any(|(_, l)| l.kind == kind && !l.retiring)
+            || self.mix.spawned_loops.contains(&kind)
     }
 
-    /// Tear down every looping layer that does not belong in `state`.
+    /// Fade out every looping layer that does not belong in `state`.
     fn retire_loops_for(&mut self, state: AppState) {
-        let gone: Vec<Entity> = self
-            .loops
-            .iter()
-            .filter(|(_, l)| !l.kind.wanted_in(state))
-            .map(|(e, _)| e)
-            .collect();
-        for e in gone {
-            self.commands.entity(e).despawn();
+        for (_, mut layer) in &mut self.loops {
+            if !layer.kind.wanted_in(state) && !layer.retiring {
+                layer.retiring = true;
+                layer.target = 0.0;
+            }
         }
     }
 
@@ -614,7 +616,7 @@ impl Sfx<'_, '_> {
     fn set_loop(&mut self, kind: LoopKind, target: f32, speed: f32) {
         let target = target.clamp(0.0, 1.0);
         for (_, mut layer) in &mut self.loops {
-            if layer.kind == kind {
+            if layer.kind == kind && !layer.retiring {
                 layer.target = target;
                 layer.speed = speed;
                 return;
@@ -637,6 +639,7 @@ impl Sfx<'_, '_> {
                 level: 0.0,
                 target,
                 speed,
+                retiring: false,
             },
             AudioPlayer::new(sounds.get(kind.clip())),
             PlaybackSettings::LOOP
@@ -720,11 +723,13 @@ fn rodio_pan_gains(emitter: Vec3, gap: f32) -> (f32, f32) {
 }
 
 /// Crossfade weights for the murmur / excited / roar beds at a given excitement.
+/// The clips are peak-normalised alike, so the weights also carry the loudness curve:
+/// a calm bowl sits well under the music, a roaring one climbs on top of it.
 fn bed_weights(excite: f32) -> [f32; 3] {
     let e = excite.clamp(0.0, 1.0);
-    let murmur = 1.0 - smoothstep(0.12, 0.62, e) * 0.85;
-    let excited = smoothstep(0.08, 0.42, e) * (1.0 - smoothstep(0.62, 1.0, e) * 0.7);
-    let roar = smoothstep(0.48, 0.95, e);
+    let murmur = (1.0 - smoothstep(0.15, 0.7, e) * 0.85) * 0.55;
+    let excited = smoothstep(0.08, 0.42, e) * (1.0 - smoothstep(0.6, 1.0, e) * 0.55) * 0.85;
+    let roar = smoothstep(0.42, 0.9, e);
     [murmur, excited, roar]
 }
 
@@ -1709,7 +1714,7 @@ fn duck_and_mix(
 ) {
     let dt = time.delta_secs().min(0.1);
 
-    // Sidechain: fast dive, slow recovery.
+    // Sidechain: fast dive (the "release" rate applies when heading down), slow recovery.
     mix.duck_hold = (mix.duck_hold - dt).max(0.0);
     if mix.duck_hold <= 0.0 {
         mix.duck_target = 1.0;
@@ -1730,14 +1735,17 @@ fn duck_and_mix(
     let rush_level = mix.rush_target.max(smoothstep(0.85, 1.0, mix.intensity) * 0.6);
 
     for (e, mut layer, sink) in &mut layers {
-        match layer.kind {
-            LoopKind::IngameDrums => layer.target = drums_level,
-            LoopKind::IngameRush => layer.target = rush_level,
-            _ => {}
+        if !layer.retiring {
+            match layer.kind {
+                LoopKind::IngameDrums => layer.target = drums_level,
+                LoopKind::IngameRush => layer.target = rush_level,
+                _ => {}
+            }
         }
         let (attack, release) = layer.kind.rates();
         layer.level = approach(layer.level, layer.target, dt, attack, release);
-        if layer.kind.transient() && layer.target <= 0.0 && layer.level < 0.004 {
+        let faded = layer.target <= 0.0 && layer.level < 0.004;
+        if faded && (layer.retiring || layer.kind.transient()) {
             commands.entity(e).despawn();
             continue;
         }
@@ -1908,16 +1916,24 @@ mod tests {
     #[test]
     fn bed_weights_crossfade_sanely() {
         let calm = bed_weights(0.0);
-        assert!(calm[0] > 0.95 && calm[1] < 0.05 && calm[2] < 0.01);
+        assert!(calm[0] > 0.5 && calm[1] < 0.05 && calm[2] < 0.01);
         let mid = bed_weights(0.5);
-        assert!(mid[1] > 0.8, "excited layer should carry the middle: {mid:?}");
+        assert!(mid[1] > 0.7, "excited layer should carry the middle: {mid:?}");
         let wild = bed_weights(1.0);
-        assert!(wild[2] > 0.95 && wild[0] < 0.3);
-        for i in 0..=20 {
-            let w = bed_weights(i as f32 / 20.0);
-            let sum: f32 = w.iter().sum();
-            assert!(sum > 0.7 && sum < 2.2, "sum {sum} at {i}");
+        assert!(wild[2] > 0.95 && wild[0] < 0.2);
+        let total = |w: [f32; 3]| w.iter().sum::<f32>();
+        assert!(
+            total(wild) > total(calm) * 1.8,
+            "a roaring bowl must be clearly louder than a murmuring one"
+        );
+        let mut last_sum = 0.0;
+        for i in 0..=40 {
+            let w = bed_weights(i as f32 / 40.0);
+            let sum = total(w);
+            assert!(sum > 0.5 && sum < 2.0, "sum {sum} at {i}");
             assert!(w.iter().all(|x| (0.0..=1.0).contains(x)));
+            assert!(sum >= last_sum - 0.08, "no audible dip in the crossfade at {i}");
+            last_sum = sum;
         }
     }
 
