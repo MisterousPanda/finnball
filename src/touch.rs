@@ -59,10 +59,31 @@ pub struct StickKnob;
 const STICK_RADIUS: f32 = 64.0;
 const DEADZONE: f32 = 0.14;
 
-fn detect_touch(touches: Res<Touches>, mut state: ResMut<TouchState>) {
+fn detect_touch(touches: Res<Touches>, mut state: ResMut<TouchState>, mut probed: Local<bool>) {
+    if !*probed {
+        *probed = true;
+        if browser_has_touch_screen() {
+            state.seen = true;
+        }
+    }
     if !state.seen && touches.iter().next().is_some() {
         state.seen = true;
     }
+}
+
+/// Phones and tablets report touch points up front; showing the controls
+/// immediately there beats waiting for a first touch that might be a tap on
+/// a menu button the game never sees as a touch.
+#[cfg(target_arch = "wasm32")]
+fn browser_has_touch_screen() -> bool {
+    web_sys::window()
+        .map(|w| w.navigator().max_touch_points() > 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn browser_has_touch_screen() -> bool {
+    false
 }
 
 /// Runs after keyboard/gamepad input so it only adds to what is already set.
