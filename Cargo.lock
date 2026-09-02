@@ -2362,6 +2362,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "console_error_panic_hook",
+ "web-sys",
 ]
 
 [[package]]
