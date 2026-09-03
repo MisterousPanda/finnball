@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use crate::audio::UiClick;
 
 mod hud;
-mod menu;
+pub mod menu;
 mod select;
 mod splash;
 
