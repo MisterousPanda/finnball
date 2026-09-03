@@ -193,7 +193,13 @@ impl ArenaId {
 
 /// Arenas whose World Labs panorama has been generated and committed under
 /// `assets/env/`. Run `scripts/worldlabs_env.py`, then add the slug here.
-const ENV_PANOS: &[&str] = &[];
+const ENV_PANOS: &[&str] = &[
+    "neo_tokyo",
+    "toon_world",
+    "sky_temple",
+    "underground",
+    "crystal_coliseum",
+];
 
 fn env_pano_for(id: ArenaId) -> Option<&'static str> {
     let slug = id.slug();

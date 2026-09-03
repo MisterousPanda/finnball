@@ -145,6 +145,11 @@ def generate(arena: str, spec: dict, model: str) -> dict:
     return op["response"]
 
 
+def world_id_of(world: dict) -> str | None:
+    # The API returns `world_id`; older responses used `id`.
+    return world.get("world_id") or world.get("id")
+
+
 def fetch_world(world_id: str) -> dict:
     r = requests.get(f"{API}/worlds/{world_id}", headers=headers(), timeout=60)
     if r.status_code >= 400:
@@ -239,7 +244,7 @@ def main(argv: list[str]) -> None:
 
         entry.update(
             {
-                "world_id": world.get("id"),
+                "world_id": world_id_of(world),
                 "marble_url": world.get("world_marble_url"),
                 "caption": assets.get("caption"),
                 "model": model,
@@ -250,8 +255,8 @@ def main(argv: list[str]) -> None:
         manifest[arena] = entry
         save_manifest(manifest)
 
-        if want_mesh and world.get("id"):
-            mesh = export_mesh(arena, world["id"])
+        if want_mesh and world_id_of(world):
+            mesh = export_mesh(arena, world_id_of(world))
             if mesh:
                 print(f"  mesh → {mesh.relative_to(ROOT)} ({mesh.stat().st_size // 1024} KB)", flush=True)
     print("done. Set ArenaTheme::env_pano for the arenas that now have assets/env/<arena>.jpg.")
