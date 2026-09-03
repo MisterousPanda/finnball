@@ -97,9 +97,75 @@ impl Plugin for CourtPlugin {
                     sweep_spotlights,
                     bounce_mascot,
                     hide_jumbotron_from_above,
+                    light_from_sky_dome,
                 ),
             );
     }
+}
+
+/// Marker: this sky dome's panorama has been sampled for lighting.
+#[derive(Component)]
+struct SkyTinted;
+
+/// Once a World Labs panorama has loaded, let its colours bleed into the arena:
+/// the sky half tints the ambient light and the horizon band tints the distance
+/// fog, so a neon night city and a golden-hour temple light the court
+/// differently instead of every arena sharing one studio look.
+fn light_from_sky_dome(
+    mut commands: Commands,
+    domes: Query<(Entity, &MeshMaterial3d<StandardMaterial>), (With<SkyDome>, Without<SkyTinted>)>,
+    materials: Res<Assets<StandardMaterial>>,
+    images: Res<Assets<Image>>,
+    config: Res<MatchConfig>,
+    mut ambient: ResMut<GlobalAmbientLight>,
+    mut fogs: Query<&mut DistanceFog>,
+) {
+    for (entity, mat) in &domes {
+        let Some(tex) = materials.get(&mat.0).and_then(|m| m.base_color_texture.clone()) else {
+            continue;
+        };
+        let Some(image) = images.get(&tex) else {
+            continue;
+        };
+        let Some((sky, horizon)) = panorama_bands(image) else {
+            commands.entity(entity).insert(SkyTinted);
+            continue;
+        };
+        let theme = config.arena.theme();
+        ambient.color = theme.ambient.mix(&sky, 0.45);
+        for mut fog in &mut fogs {
+            let dim = horizon.to_linear() * 0.35;
+            fog.color = theme.fog.mix(&Color::from(dim), 0.6);
+        }
+        commands.entity(entity).insert(SkyTinted);
+    }
+}
+
+/// Average colour of the sky (top 45%) and horizon band (42-58%) of an RGBA8
+/// equirectangular image. Returns `None` for images without CPU-side data.
+fn panorama_bands(image: &Image) -> Option<(Color, Color)> {
+    let data = image.data.as_ref()?;
+    let w = image.texture_descriptor.size.width as usize;
+    let h = image.texture_descriptor.size.height as usize;
+    if w == 0 || h == 0 || data.len() < w * h * 4 {
+        return None;
+    }
+    let band = |y0: f32, y1: f32| -> Color {
+        let (mut r, mut g, mut b, mut n) = (0f64, 0f64, 0f64, 0f64);
+        let step = (w / 128).max(1);
+        for y in ((h as f32 * y0) as usize..(h as f32 * y1) as usize).step_by(step) {
+            for x in (0..w).step_by(step) {
+                let i = (y * w + x) * 4;
+                r += data[i] as f64;
+                g += data[i + 1] as f64;
+                b += data[i + 2] as f64;
+                n += 1.0;
+            }
+        }
+        let n = n.max(1.0) * 255.0;
+        Color::srgb((r / n) as f32, (g / n) as f32, (b / n) as f32)
+    };
+    Some((band(0.0, 0.45), band(0.42, 0.58)))
 }
 
 #[derive(Component)]
@@ -2395,6 +2461,37 @@ pub const _COURT_EXTENT: (f32, f32) = (COURT_HALF_LEN, COURT_HALF_WID);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn panorama_bands_split_sky_and_horizon() {
+        // Top half pure blue sky, bottom half green ground.
+        let (w, h) = (64u32, 100u32);
+        let mut data = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                if y < h / 2 {
+                    data[i + 2] = 255;
+                } else {
+                    data[i + 1] = 255;
+                }
+                data[i + 3] = 255;
+            }
+        }
+        let image = Image::new(
+            Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            TextureDimension::D2,
+            data,
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::all(),
+        );
+        let (sky, horizon) = panorama_bands(&image).expect("cpu data");
+        let sky = sky.to_srgba();
+        assert!(sky.blue > 0.95 && sky.green < 0.05, "sky {:?}", sky);
+        let hz = horizon.to_srgba();
+        assert!(hz.blue > 0.3 && hz.green > 0.3, "horizon mixes both bands: {:?}", hz);
+
+    }
 
     #[test]
     fn aisles_are_regular_and_symmetric() {
