@@ -166,7 +166,7 @@ fn ai_decisions(
     clock: Res<MatchClock>,
     mut last_pass: ResMut<LastPass>,
     mut ball_q: Query<
-        (&Transform, &mut crate::ball::BallVel, &mut BallState),
+        (&mut Transform, &mut crate::ball::BallVel, &mut BallState),
         (With<Ball>, Without<Player>),
     >,
     mut players: Query<
@@ -188,7 +188,7 @@ fn ai_decisions(
     if paused.0 || config.mode == GameMode::Practice {
         return;
     }
-    let Ok((btf, mut bvel, mut st)) = ball_q.single_mut() else {
+    let Ok((mut btf, mut bvel, mut st)) = ball_q.single_mut() else {
         return;
     };
 
@@ -260,9 +260,13 @@ fn ai_decisions(
             );
         }
         let flight = crate::sim::flight_time_for_distance(dist);
-        let from = [pos.x, 1.85, pos.z];
+        // Release from the hands, not from wherever the dribble left the ball:
+        // the solve assumes this point, and launching from the dribble
+        // position (~1.3 m off) meant AI shots never went in.
+        let from = Vec3::new(pos.x, 1.85, pos.z);
+        btf.translation = from;
         let v = crate::sim::ballistic_velocity(
-            from,
+            from.to_array(),
             [target.x, target.y, target.z],
             flight,
             crate::sim::GRAVITY,
@@ -280,7 +284,7 @@ fn ai_decisions(
             *pose = if should_dunk { Pose::Dunk } else { Pose::Shoot };
             clock.0 = 0.0;
         }
-        let _ = (meter, intent, btf, pass, stam);
+        let _ = (meter, intent, pass, stam);
         return;
     }
 
@@ -297,8 +301,10 @@ fn ai_decisions(
     if let Some((mate_e, _, _, mt, ..)) = mate {
         let dest = mt.translation + Vec3::Y * 1.4;
         let t = 0.35;
+        let from = Vec3::new(pos.x, 1.4, pos.z);
+        btf.translation = from;
         let v = crate::sim::ballistic_velocity(
-            [pos.x, 1.4, pos.z],
+            from.to_array(),
             [dest.x, dest.y, dest.z],
             t,
             crate::sim::GRAVITY * 0.4,

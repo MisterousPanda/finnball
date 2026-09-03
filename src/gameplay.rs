@@ -109,9 +109,13 @@ impl Default for GameRng {
 }
 
 impl GameRng {
+    /// Uniform in [0, 1). Takes the top 24 bits of the LCG state (the low bits
+    /// of an LCG are weak) and scales by 2^24 — dividing those 24 bits by
+    /// `u32::MAX` used to squash every roll into [0, 0.004], which made every
+    /// shot dead-centre and every steal succeed.
     pub fn f32(&mut self) -> f32 {
         self.0 = self.0.wrapping_mul(0x5851F42D4C957F2D).wrapping_add(1);
-        ((self.0 >> 40) as u32) as f32 / (u32::MAX as f32)
+        (self.0 >> 40) as f32 / (1u64 << 24) as f32
     }
 
     pub fn range(&mut self, a: f32, b: f32) -> f32 {
