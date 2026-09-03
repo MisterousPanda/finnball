@@ -181,7 +181,7 @@ fn orbit_menu_cam(
     // Open-air arenas: orbit lower and look up so the generated world shows
     // above the far stands; closed arenas keep the classic high court view.
     let open_air = config.arena.theme().env_pano.is_some();
-    let (radius, height, look_y) = if open_air { (20.0, 5.8, 5.0) } else { (18.0, 9.0, 0.6) };
+    let (radius, height, look_y) = if open_air { (14.5, 6.8, 5.6) } else { (18.0, 9.0, 0.6) };
     let desired = clamp_cam(Vec3::new(
         t.sin() * radius,
         height + t.cos() * 0.6,
@@ -267,6 +267,7 @@ fn follow_game_cam(
     time: Res<Time>,
     paused: Res<Paused>,
     settings: Res<CameraSettings>,
+    config: Res<MatchConfig>,
     clock: Res<MatchClock>,
     mut director: ResMut<CameraDirector>,
     mut fx: ResMut<CameraPostFx>,
@@ -476,6 +477,7 @@ fn follow_game_cam(
         hoop_focus,
         time.elapsed_secs(),
         phase,
+        config.arena.theme().env_pano.is_some(),
     );
     smooth_cam(
         &mut ctf,
@@ -677,6 +679,7 @@ struct ShotFrame {
     rot_lambda: f32,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn frame_shot(
     shot: CameraShot,
     look: Vec3,
@@ -685,6 +688,7 @@ fn frame_shot(
     hoop: Vec3,
     t: f32,
     phase: f32,
+    open_air: bool,
 ) -> ShotFrame {
     let hoop_sign = if hoop.x.abs() < 0.1 {
         1.0
@@ -692,6 +696,15 @@ fn frame_shot(
         hoop.x.signum()
     };
     let (pos, look_at, fov, pos_l, rot_l): (Vec3, Vec3, f32, f32, f32) = match shot {
+        // Open-air arenas shoot lower and wider, aimed a little higher, so the
+        // World Labs skyline behind the far stands stays in the top of frame.
+        CameraShot::BroadcastSideline if open_air => (
+            Vec3::new(look.x * 0.55, 4.6, 13.0),
+            look + Vec3::Y * 1.6,
+            56.0,
+            2.8,
+            3.5,
+        ),
         CameraShot::BroadcastSideline => (
             Vec3::new(look.x * 0.55, 6.9, 11.8),
             look + Vec3::Y * 0.3,
@@ -783,6 +796,13 @@ fn frame_shot(
             5.6,
             6.2,
         ),
+        CameraShot::BuzzerBeat if open_air => (
+            Vec3::new(look.x * 0.5, 4.4, 12.6),
+            look + Vec3::Y * 1.7,
+            54.0,
+            3.6,
+            4.2,
+        ),
         CameraShot::BuzzerBeat => (
             Vec3::new(look.x * 0.5, 6.6, 11.4),
             look + Vec3::Y * 0.5,
@@ -790,12 +810,26 @@ fn frame_shot(
             3.6,
             4.2,
         ),
+        CameraShot::ThreePointWide if open_air => (
+            Vec3::new(look.x * 0.4, 6.0, 14.4),
+            look + Vec3::Y * 2.2,
+            58.0,
+            2.5,
+            3.0,
+        ),
         CameraShot::ThreePointWide => (
             Vec3::new(look.x * 0.4, 8.2, 13.6),
             look + Vec3::Y * 0.8,
             52.0,
             2.5,
             3.0,
+        ),
+        CameraShot::LogoHalfCourt if open_air => (
+            Vec3::new(look.x * 0.3, 6.4, 15.4),
+            look + Vec3::Y * 2.6,
+            60.0,
+            2.3,
+            2.8,
         ),
         CameraShot::LogoHalfCourt => (
             Vec3::new(look.x * 0.3, 9.6, 14.6),
@@ -810,6 +844,13 @@ fn frame_shot(
             50.0,
             3.0,
             3.4,
+        ),
+        CameraShot::FastBreakWide if open_air => (
+            Vec3::new(look.x * 0.55 - actor.x.signum() * 1.5, 4.8, 13.6),
+            look + Vec3::Y * 1.7,
+            56.0,
+            3.2,
+            3.6,
         ),
         CameraShot::FastBreakWide => (
             Vec3::new(look.x * 0.55 - actor.x.signum() * 1.5, 7.2, 12.6),
@@ -838,9 +879,9 @@ fn frame_shot(
             // the broadcast sideline framing as the hold runs out.
             let k = phase * phase * (3.0 - 2.0 * phase);
             let from_pos = Vec3::new(-4.0, 4.6, 7.5);
-            let to_pos = Vec3::new(look.x * 0.55, 6.9, 11.8);
+            let to_pos = Vec3::new(look.x * 0.55, 4.6, 13.0);
             let from_look = Vec3::new(2.0, 30.0, -30.0);
-            let to_look = look + Vec3::Y * 0.3;
+            let to_look = look + Vec3::Y * 1.6;
             (
                 from_pos.lerp(to_pos, k),
                 from_look.lerp(to_look, k),

@@ -107,10 +107,11 @@ fn light_from_sky_dome(
     mut commands: Commands,
     domes: Query<(Entity, &MeshMaterial3d<StandardMaterial>), (With<SkyDome>, Without<SkyTinted>)>,
     materials: Res<Assets<StandardMaterial>>,
-    images: Res<Assets<Image>>,
+    mut images: ResMut<Assets<Image>>,
     config: Res<MatchConfig>,
     mut ambient: ResMut<GlobalAmbientLight>,
     mut fogs: Query<&mut DistanceFog>,
+    cams: Query<Entity, With<crate::camera::GameCam>>,
 ) {
     for (entity, mat) in &domes {
         let Some(tex) = materials.get(&mat.0).and_then(|m| m.base_color_texture.clone()) else {
@@ -123,11 +124,23 @@ fn light_from_sky_dome(
             commands.entity(entity).insert(SkyTinted);
             continue;
         };
+        let cube = panorama_cubemap(image, ENV_CUBE_FACE);
         let theme = config.arena.theme();
         ambient.color = theme.ambient.mix(&sky, 0.45);
         for mut fog in &mut fogs {
             let dim = horizon.to_linear() * 0.35;
             fog.color = theme.fog.mix(&Color::from(dim), 0.6);
+        }
+        if let Some(cube) = cube {
+            let handle = images.add(cube);
+            for cam in &cams {
+                commands.entity(cam).insert(EnvironmentMapLight {
+                    diffuse_map: handle.clone(),
+                    specular_map: handle.clone(),
+                    intensity: ENV_LIGHT_INTENSITY,
+                    ..default()
+                });
+            }
         }
         commands.entity(entity).insert(SkyTinted);
     }
@@ -248,6 +261,7 @@ fn ensure_arena(
     quality: Res<Quality>,
     config: Res<MatchConfig>,
     existing: Query<Entity, With<ArenaRoot>>,
+    cams: Query<Entity, With<crate::camera::GameCam>>,
 ) {
     if built.0 == Some(config.arena) && !existing.is_empty() {
         return;
@@ -257,6 +271,12 @@ fn ensure_arena(
     }
     built.0 = Some(config.arena);
     let theme = config.arena.theme();
+    if theme.env_pano.is_none() {
+        // Closed arenas light themselves; drop the previous world's reflections.
+        for cam in &cams {
+            commands.entity(cam).remove::<EnvironmentMapLight>();
+        }
+    }
     let floor = court_texture(&mut images, &mut cache, &theme, quality.court_px_per_m);
     build_arena(
         &mut commands,
@@ -395,7 +415,9 @@ fn build_arena(
     });
     commands.insert_resource(ClearColor(theme.sky));
     if let Some(pano) = theme.env_pano {
-        spawn_sky_dome(commands, meshes, materials, asset_server, pano);
+        // The world's horizon sits on the parapet, so its ground is hidden by the
+        // bowl and everything from the skyline down to the rail is world.
+        spawn_sky_dome(commands, meshes, materials, asset_server, pano, open_air_horizon_y(quality.tiers));
     }
 
     let accent_lin = LinearRgba::from(theme.accent.to_linear());
@@ -697,39 +719,66 @@ fn build_arena(
         ..default()
     });
     let top_y = bowl.top_y;
+    let open_air = theme.env_pano.is_some();
     let mut banners = TexBatch::default();
-    let beam_y = top_y + 7.6;
+    // Closed arenas hang banners from rafters over the bowl; open-air ones fly
+    // them from a rail on posts along the parapet, silhouetted against the world.
+    let beam_y = if open_air { top_y + 5.2 } else { top_y + 7.6 };
     let beam = [0.05, 0.05, 0.07];
     let n_champ = theme.banner_years.len();
     let n_ret = theme.retired.len();
     for s in [-1.0f32, 1.0] {
         // Long-side rafter beam over the lower bowl, banners hanging below it.
-        let bz = s * (SIDE_START + bowl.far * 0.55);
-        deco.block(
-            &parts,
-            Vec3::new(0.0, beam_y, bz),
-            Vec3::new(30.0, 0.25, 0.25),
-            0.0,
-            beam,
-        );
-        let total = n_champ + n_ret;
-        for i in 0..total {
-            let x = (i as f32 - (total as f32 - 1.0) * 0.5) * 2.6;
-            let uv = uvs[i];
-            let c = Vec3::new(x, beam_y - 1.9, bz);
-            // face the court: normal toward -s z
-            let right = Vec3::X * -s;
-            banners.quad(c, right * 0.85, Vec3::Y * 1.4, uv);
+        // Open-air arenas leave the far view deck clear: that is where the
+        // world shows.
+        if !(open_air && s < 0.0) {
+            let bz = if open_air {
+                s * (SIDE_START + bowl.far + 0.65)
+            } else {
+                s * (SIDE_START + bowl.far * 0.55)
+            };
             deco.block(
                 &parts,
-                Vec3::new(x, beam_y - 0.3, bz),
-                Vec3::new(0.05, 0.45, 0.05),
+                Vec3::new(0.0, beam_y, bz),
+                Vec3::new(30.0, 0.25, 0.25),
                 0.0,
-                [0.6, 0.6, 0.65],
+                beam,
             );
+            if open_air {
+                let post_h = beam_y - (top_y + 1.4);
+                for px in [-15.0f32, 0.0, 15.0] {
+                    deco.block(
+                        &parts,
+                        Vec3::new(px, beam_y - post_h * 0.5, bz),
+                        Vec3::new(0.18, post_h, 0.18),
+                        0.0,
+                        beam,
+                    );
+                }
+            }
+            let total = n_champ + n_ret;
+            for i in 0..total {
+                let x = (i as f32 - (total as f32 - 1.0) * 0.5) * 2.6;
+                let uv = uvs[i];
+                let c = Vec3::new(x, beam_y - 1.9, bz);
+                // face the court: normal toward -s z
+                let right = Vec3::X * -s;
+                banners.quad(c, right * 0.85, Vec3::Y * 1.4, uv);
+                deco.block(
+                    &parts,
+                    Vec3::new(x, beam_y - 0.3, bz),
+                    Vec3::new(0.05, 0.45, 0.05),
+                    0.0,
+                    [0.6, 0.6, 0.65],
+                );
+            }
         }
         // Retired numbers again on the end walls
-        let bx = s * (END_START + bowl.far * 0.55);
+        let bx = if open_air {
+            s * (END_START + bowl.far + 0.65)
+        } else {
+            s * (END_START + bowl.far * 0.55)
+        };
         deco.block(
             &parts,
             Vec3::new(bx, beam_y, 0.0),
@@ -737,6 +786,18 @@ fn build_arena(
             0.0,
             beam,
         );
+        if open_air {
+            let post_h = beam_y - (top_y + 1.4);
+            for pz in [-8.0f32, 8.0] {
+                deco.block(
+                    &parts,
+                    Vec3::new(bx, beam_y - post_h * 0.5, pz),
+                    Vec3::new(0.18, post_h, 0.18),
+                    0.0,
+                    beam,
+                );
+            }
+        }
         for (k, uv) in uvs.iter().skip(n_champ).take(n_ret).enumerate() {
             let z = (k as f32 - (n_ret as f32 - 1.0) * 0.5) * 2.6;
             let c = Vec3::new(bx, beam_y - 1.9, z);
@@ -848,6 +909,49 @@ fn build_arena(
         Transform::from_xyz(0.0, cube_y + 5.0, 0.0),
     ));
 
+    // Open-air: four corner light masts outside the parapet; the jumbotron
+    // hangs from cables strung between their heads instead of from a roof.
+    let mast_top = open_air_mast_top(top_y);
+    let mast_x = END_START + bowl.far + 1.6;
+    let mast_z = SIDE_START + bowl.far + 1.6;
+    let mast_heads: Vec<Vec3> = if open_air {
+        [(-1.0f32, -1.0f32), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
+            .into_iter()
+            .map(|(sx, sz)| Vec3::new(sx * mast_x, mast_top, sz * mast_z))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if open_air {
+        let mast_mesh = meshes.add(Cylinder::new(0.32, mast_top));
+        let cable_mesh = meshes.add(Cylinder::new(0.05, 1.0));
+        let hub = Vec3::new(0.0, cube_y + 8.0, 0.0);
+        for head in &mast_heads {
+            commands.spawn((
+                ArenaRoot,
+                Mesh3d(mast_mesh.clone()),
+                MeshMaterial3d(pole_mat.clone()),
+                Transform::from_xyz(head.x, mast_top * 0.5, head.z),
+            ));
+            commands.spawn((
+                ArenaRoot,
+                Mesh3d(meshes.add(Cuboid::new(3.0, 0.5, 1.8))),
+                MeshMaterial3d(lightbank.clone()),
+                Transform::from_xyz(head.x * 0.94, mast_top + 0.2, head.z * 0.94),
+            ));
+            let d = hub - *head;
+            commands.spawn((
+                ArenaRoot,
+                Jumbotron,
+                Mesh3d(cable_mesh.clone()),
+                MeshMaterial3d(pole_mat.clone()),
+                Transform::from_translation(*head + d * 0.5)
+                    .with_rotation(Quat::from_rotation_arc(Vec3::Y, d.normalize()))
+                    .with_scale(Vec3::new(1.0, d.length(), 1.0)),
+            ));
+        }
+    }
+
     // --- rigging: light banks + truss ring + spotlight beams + haze
     // Beam tint follows the arena's emissive signature colour.
     let em = theme.emissive;
@@ -869,34 +973,49 @@ fn build_arena(
         radius: 2.6,
         height: 20.0,
     });
-    for (i, (x, z)) in [(-9.0, 5.5), (9.0, 5.5), (-9.0, -5.5), (9.0, -5.5)]
-        .into_iter()
-        .enumerate()
-    {
-        commands.spawn((
-            ArenaRoot,
-            Mesh3d(meshes.add(Cuboid::new(2.4, 0.3, 1.0))),
-            MeshMaterial3d(lightbank.clone()),
-            Transform::from_xyz(x, 14.2, z),
-        ));
+    // Closed roof: banks hang over the court. Open-air: the lights sit on the
+    // corner masts and throw in from outside the bowl.
+    let bank_positions: Vec<Vec3> = if open_air {
+        mast_heads.iter().map(|h| *h - Vec3::Y * 0.4).collect()
+    } else {
+        [(-9.0, 5.5), (9.0, 5.5), (-9.0, -5.5), (9.0, -5.5)]
+            .into_iter()
+            .map(|(x, z)| Vec3::new(x, 14.2, z))
+            .collect()
+    };
+    for (i, p) in bank_positions.iter().enumerate() {
+        let (x, z) = (p.x, p.z);
+        if !open_air {
+            commands.spawn((
+                ArenaRoot,
+                Mesh3d(meshes.add(Cuboid::new(2.4, 0.3, 1.0))),
+                MeshMaterial3d(lightbank.clone()),
+                Transform::from_xyz(x, p.y, z),
+            ));
+        }
+        let aim = if open_air {
+            Vec3::new(x * 0.35, 0.0, z * 0.3)
+        } else {
+            Vec3::new(x * 0.55, 0.0, z * 0.2)
+        };
         commands.spawn((
             ArenaRoot,
             SpotLight {
-                intensity: 2_200_000.0,
-                range: 40.0,
+                intensity: if open_air { 4_200_000.0 } else { 2_200_000.0 },
+                range: if open_air { 60.0 } else { 40.0 },
                 radius: 0.4,
                 color: Color::srgb(1.0, 0.96, 0.9),
                 shadows_enabled: false, // WASM + llvmpipe cannot afford shadow maps
-                inner_angle: 0.55,
-                outer_angle: 1.05,
+                inner_angle: if open_air { 0.4 } else { 0.55 },
+                outer_angle: if open_air { 0.8 } else { 1.05 },
                 ..default()
             },
-            Transform::from_xyz(x, 14.0, z).looking_at(Vec3::new(x * 0.55, 0.0, z * 0.2), Vec3::Y),
+            Transform::from_xyz(x, p.y - 0.2, z).looking_at(aim, Vec3::Y),
         ));
         commands.spawn((
             ArenaRoot,
             SweepCone {
-                pos: Vec3::new(x, 14.0, z),
+                pos: Vec3::new(x, p.y - 0.2, z),
                 phase: i as f32 * 1.7,
                 fade: 0.0,
             },
@@ -910,7 +1029,11 @@ fn build_arena(
         commands.spawn((
             ArenaRoot,
             SweepCone {
-                pos: Vec3::new(0.0, 15.4, z * 21.0),
+                pos: if open_air {
+                    Vec3::new(0.0, mast_top - 0.5, z * mast_z)
+                } else {
+                    Vec3::new(0.0, 15.4, z * 21.0)
+                },
                 phase: 4.0 + i as f32 * 2.3,
                 fade: 0.0,
             },
@@ -920,21 +1043,23 @@ fn build_arena(
             Visibility::Hidden,
         ));
     }
-    let truss_mat = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.02, 0.02, 0.04),
-        emissive: accent_lin * 1.6,
-        perceptual_roughness: 0.3,
-        ..default()
-    });
-    commands.spawn((
-        ArenaRoot,
-        Mesh3d(meshes.add(Torus {
-            minor_radius: 0.18,
-            major_radius: 22.0,
-        })),
-        MeshMaterial3d(truss_mat),
-        Transform::from_xyz(0.0, 15.5, 0.0),
-    ));
+    if !open_air {
+        let truss_mat = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.02, 0.02, 0.04),
+            emissive: accent_lin * 1.6,
+            perceptual_roughness: 0.3,
+            ..default()
+        });
+        commands.spawn((
+            ArenaRoot,
+            Mesh3d(meshes.add(Torus {
+                minor_radius: 0.18,
+                major_radius: 22.0,
+            })),
+            MeshMaterial3d(truss_mat),
+            Transform::from_xyz(0.0, 15.5, 0.0),
+        ));
+    }
     let haze_mat = materials.add(StandardMaterial {
         base_color: theme.fog.with_alpha(0.05),
         alpha_mode: AlphaMode::Add,
@@ -1036,7 +1161,10 @@ fn spawn_stands(
     theme: &ArenaTheme,
     quality: &Quality,
 ) -> BowlInfo {
-    let tiers = quality.tiers;
+    // Open-air arenas (World Labs panorama) keep a low lower bowl so the
+    // generated world, not seating, fills everything above the crowd.
+    let open_air = theme.env_pano.is_some();
+    let tiers = if open_air { quality.tiers.min(OPEN_AIR_TIERS) } else { quality.tiers };
     let home = crate::roster::Side::Home.primary();
     let away = crate::roster::Side::Away.primary();
     // Home fans fill the -x half, visitors the +x half, mixed in the middle.
@@ -1079,6 +1207,12 @@ fn spawn_stands(
         let end_len = (PLANE_HALF_WID + 0.6 + off) * 2.0;
 
         for (si, s) in [-1.0f32, 1.0].into_iter().enumerate() {
+            // Open-air: the far sideline (-Z, what the broadcast camera faces)
+            // is a low view deck so the World Labs world is the backdrop.
+            let tiers = if open_air && s < 0.0 { tiers.min(OPEN_AIR_FAR_TIERS) } else { tiers };
+            if tier >= tiers {
+                continue;
+            }
             // long side riser + step lip
             let z = s * (SIDE_START + off);
             deco.block(
@@ -1332,9 +1466,14 @@ fn spawn_stands(
         verts += spawn_batch(commands, meshes, b, crowd_mat);
     }
 
-    // --- suite level: glass boxes with warm light and silhouettes
     let top_y = FIRST_Y + tiers as f32 * TIER_RISE;
     let far = tiers as f32 * TIER_DEPTH;
+    if open_air {
+        spawn_open_air_rim(parts, deco, theme, top_y, far, tiers);
+        return BowlInfo { top_y, far, verts };
+    }
+
+    // --- suite level: glass boxes with warm light and silhouettes
     let suite_y0 = top_y + 0.3;
     let suite_h = 2.8;
     let facade = [0.025, 0.028, 0.04];
@@ -1423,11 +1562,8 @@ fn spawn_stands(
             }
         }
 
-        // --- upper deck: steeper rake, impostor fans. Open-air arenas (World
-        // Labs panorama) keep only a shallow upper tier so the generated world
-        // rises above the bowl instead of a wall of seats.
-        let open_air = theme.env_pano.is_some();
-        let upper_rows = if open_air { 3.min(quality.upper_rows) } else { quality.upper_rows };
+        // --- upper deck: steeper rake, impostor fans.
+        let upper_rows = quality.upper_rows;
         let up_y0 = suite_y0 + suite_h + 0.3;
         let up_side0 = side_face + 0.9;
         let up_end0 = end_face + 0.9;
@@ -1486,12 +1622,9 @@ fn spawn_stands(
             }
         }
 
-        // --- back walls up to the roof, roof, roof lights. With a World Labs
-        // panorama the bowl is open-air: walls stop at a parapet above the upper
-        // deck and the roof is only its truss frame, so the generated world
-        // shows above the stands and through the opening.
+        // --- back walls up to the roof, roof, roof lights.
         let roof_y = up_top + 4.5;
-        let wall_top = if open_air { up_top + 1.3 } else { roof_y };
+        let wall_top = roof_y;
         let wall_z = s * (up_side0 + upper_rows as f32 * UPPER_DEPTH + 0.3);
         let wall_len = (PLANE_HALF_LEN + 1.2 + far + upper_rows as f32 * UPPER_DEPTH) * 2.0 + 4.0;
         deco.block(
@@ -1521,41 +1654,24 @@ fn spawn_stands(
         );
         if s > 0.0 {
             // roof (normal down) + girders + ring of roof lights
-            if open_air {
-                // Truss frame around a big opening: four flat bands along the edges.
-                let band = 3.0;
-                let hx = wall_len * 0.5;
-                let hz = wall_wid * 0.5;
-                for (c, ex, ez) in [
-                    (Vec3::new(0.0, roof_y, hz - band * 0.5), hx, band * 0.5),
-                    (Vec3::new(0.0, roof_y, -hz + band * 0.5), hx, band * 0.5),
-                    (Vec3::new(hx - band * 0.5, roof_y, 0.0), band * 0.5, hz - band),
-                    (Vec3::new(-hx + band * 0.5, roof_y, 0.0), band * 0.5, hz - band),
-                ] {
-                    deco.quad(c, Vec3::X * ex, Vec3::Z * ez, lin(theme.roof), 0.0, 0.0, 0.0, PART_LED);
-                }
-            } else {
-                deco.quad(
-                    Vec3::new(0.0, roof_y, 0.0),
-                    Vec3::X * (wall_len * 0.5),
-                    Vec3::Z * (wall_wid * 0.5),
-                    lin(theme.roof),
+            deco.quad(
+                Vec3::new(0.0, roof_y, 0.0),
+                Vec3::X * (wall_len * 0.5),
+                Vec3::Z * (wall_wid * 0.5),
+                lin(theme.roof),
+                0.0,
+                0.0,
+                0.0,
+                PART_LED,
+            );
+            for k in -3..=3 {
+                deco.block(
+                    parts,
+                    Vec3::new(k as f32 * 9.0, roof_y - 0.5, 0.0),
+                    Vec3::new(0.5, 0.8, wall_wid - 1.0),
                     0.0,
-                    0.0,
-                    0.0,
-                    PART_LED,
+                    [0.03, 0.03, 0.04],
                 );
-            }
-            if !open_air {
-                for k in -3..=3 {
-                    deco.block(
-                        parts,
-                        Vec3::new(k as f32 * 9.0, roof_y - 0.5, 0.0),
-                        Vec3::new(0.5, 0.8, wall_wid - 1.0),
-                        0.0,
-                        [0.03, 0.03, 0.04],
-                    );
-                }
             }
             let n_lights = 20;
             for i in 0..n_lights {
@@ -1570,6 +1686,83 @@ fn spawn_stands(
     BowlInfo { top_y, far, verts }
 }
 
+/// Lower-bowl tier cap for open-air arenas: the bowl stops at about shoulder
+/// height of the broadcast camera so the panorama fills the frame above it.
+const OPEN_AIR_TIERS: usize = 5;
+/// Far-sideline tiers in open-air arenas: a low view deck under the world.
+const OPEN_AIR_FAR_TIERS: usize = 2;
+
+/// Height of the far-side rail: the panorama horizon sits here so the world's
+/// ground stays hidden and its skyline starts right behind the deck.
+fn open_air_horizon_y(tiers: usize) -> f32 {
+    let t = tiers.min(OPEN_AIR_TIERS).min(OPEN_AIR_FAR_TIERS);
+    FIRST_Y + t as f32 * TIER_RISE + 1.4 + 1.1
+}
+
+/// What replaces suites, upper deck, walls and roof when the arena is open to a
+/// World Labs world: a parapet wall behind the last tier with a glass railing
+/// and a glowing team wordmark strip, so the crowd reads as a bowl sunk into
+/// the generated world rather than a slice of a closed stadium.
+fn spawn_open_air_rim(parts: &Parts, deco: &mut Batch, theme: &ArenaTheme, top_y: f32, far: f32, tiers: usize) {
+    let home = crate::roster::Side::Home.primary();
+    let away = crate::roster::Side::Away.primary();
+    let end_face = END_START + far + 0.35;
+    let wall_c = [0.02, 0.022, 0.035];
+    let glass_c = [0.05, 0.08, 0.12];
+    let rail_c = [0.55, 0.58, 0.62];
+    for s in [-1.0f32, 1.0] {
+        let (top_y, far) = if s < 0.0 {
+            let t = tiers.min(OPEN_AIR_FAR_TIERS);
+            (FIRST_Y + t as f32 * TIER_RISE, t as f32 * TIER_DEPTH)
+        } else {
+            (top_y, far)
+        };
+        let side_face = SIDE_START + far + 0.35;
+        let wall_h = top_y + 1.4;
+        // Long sides: solid parapet to just above the last row, glass above it.
+        let len = (PLANE_HALF_LEN + 1.2 + far) * 2.0 + 4.0;
+        deco.block(parts, Vec3::new(0.0, wall_h * 0.5, s * (side_face + 0.3)), Vec3::new(len, wall_h, 0.6), 0.0, wall_c);
+        deco.block(parts, Vec3::new(0.0, wall_h + 0.55, s * (side_face + 0.3)), Vec3::new(len, 1.1, 0.06), 0.0, glass_c);
+        deco.block(parts, Vec3::new(0.0, wall_h + 1.12, s * (side_face + 0.3)), Vec3::new(len, 0.08, 0.14), 0.0, rail_c);
+        deco.glow_block(
+            parts,
+            Vec3::new(0.0, wall_h - 0.35, s * (side_face - 0.02)),
+            Vec3::new(len * 0.7, 0.32, 0.04),
+            0.0,
+            if s < 0.0 { lin(home) } else { lin(away) },
+            0.7,
+        );
+        deco.glow_block(
+            parts,
+            Vec3::new(0.0, wall_h + 1.17, s * (side_face + 0.3)),
+            Vec3::new(len, 0.04, 0.16),
+            0.0,
+            lin(theme.accent),
+            0.9,
+        );
+        // Ends (full-height bowl on both ends).
+        let (top_y, far) = (FIRST_Y + tiers as f32 * TIER_RISE, tiers as f32 * TIER_DEPTH);
+        let wall_h = top_y + 1.4;
+        let wid = (PLANE_HALF_WID + 0.6 + far) * 2.0 + 4.0;
+        deco.block(parts, Vec3::new(s * (end_face + 0.3), wall_h * 0.5, 0.0), Vec3::new(0.6, wall_h, wid), 0.0, wall_c);
+        deco.block(parts, Vec3::new(s * (end_face + 0.3), wall_h + 0.55, 0.0), Vec3::new(0.06, 1.1, wid), 0.0, glass_c);
+        deco.block(parts, Vec3::new(s * (end_face + 0.3), wall_h + 1.12, 0.0), Vec3::new(0.14, 0.08, wid), 0.0, rail_c);
+        deco.glow_block(
+            parts,
+            Vec3::new(s * (end_face + 0.3), wall_h + 1.17, 0.0),
+            Vec3::new(0.16, 0.04, wid),
+            0.0,
+            lin(theme.accent),
+            0.9,
+        );
+    }
+}
+
+/// Height of the open-air light masts; the jumbotron catenary hangs from here.
+fn open_air_mast_top(top_y: f32) -> f32 {
+    top_y + 15.0
+}
+
 /// Wrap the stadium in an equirectangular panorama (a World Labs Marble world).
 /// Bevy's UV sphere has its poles on +/-Z with u running counter-clockwise, so
 /// the mesh is tipped pole-up and mirrored on X: the mirror turns the winding
@@ -1581,6 +1774,7 @@ fn spawn_sky_dome(
     materials: &mut Assets<StandardMaterial>,
     asset_server: &AssetServer,
     pano: &'static str,
+    horizon_y: f32,
 ) {
     let tex: Handle<Image> = asset_server.load(pano);
     let mesh = meshes.add(Sphere::new(SKY_DOME_RADIUS).mesh().uv(64, 32));
@@ -1598,7 +1792,7 @@ fn spawn_sky_dome(
         SkyDome,
         Mesh3d(mesh),
         MeshMaterial3d(mat),
-        Transform::from_xyz(0.0, SKY_DOME_HORIZON_Y, 0.0)
+        Transform::from_xyz(0.0, horizon_y, 0.0)
             .with_scale(Vec3::new(-1.0, 1.0, 1.0))
             .with_rotation(
                 Quat::from_rotation_y(SKY_DOME_YAW)
@@ -1612,15 +1806,91 @@ fn spawn_sky_dome(
 /// Far enough that no arena geometry pokes through, near enough to stay inside
 /// the camera's far plane.
 const SKY_DOME_RADIUS: f32 = 190.0;
-/// Panorama horizon sits a little above the concourse so the upper half (sky,
-/// skyline tops) is what shows above the stands and through the roof.
-const SKY_DOME_HORIZON_Y: f32 = 16.0;
 /// Put the panorama's centre (u = 0.5) on the far sideline (-Z), which is what
 /// the broadcast and tip-off cameras look towards.
 const SKY_DOME_YAW: f32 = std::f32::consts::FRAC_PI_2;
 
 #[derive(Component)]
 pub struct SkyDome;
+
+/// The dome's transform as a rotation + mirror, shared with the cubemap
+/// builder so reflections line up with what the sky dome shows.
+fn sky_dome_rotation() -> Quat {
+    Quat::from_rotation_y(SKY_DOME_YAW) * Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+}
+
+/// Panorama texel (u, v in 0..1) seen from the arena centre along world
+/// direction `d`, matching the sky dome mesh exactly. Bevy's UV sphere puts
+/// u = atan2(y, x) / TAU around its +Z pole and v = acos(z) / PI down from it
+/// (checked against the generated mesh in the tests); the dome is mirrored on
+/// X and rotated, so undo both then apply that mapping.
+fn panorama_uv_for_dir(d: Vec3) -> (f32, f32) {
+    let local = sky_dome_rotation().inverse() * d.normalize();
+    let local = Vec3::new(-local.x, local.y, local.z);
+    let u = local.y.atan2(local.x) / std::f32::consts::TAU;
+    let u = u.rem_euclid(1.0);
+    let v = local.z.clamp(-1.0, 1.0).acos() / std::f32::consts::PI;
+    (u, v)
+}
+
+/// Bake a small cubemap from the panorama so the PBR environment light (floor
+/// clearcoat reflections, jersey highlights, sky-coloured fill) comes from the
+/// World Labs world. wgpu cube faces: +X, -X, +Y, -Y, +Z, -Z, stacked vertically.
+fn panorama_cubemap(image: &Image, face: u32) -> Option<Image> {
+    let data = image.data.as_ref()?;
+    let w = image.texture_descriptor.size.width as usize;
+    let h = image.texture_descriptor.size.height as usize;
+    if w == 0 || h == 0 || data.len() < w * h * 4 {
+        return None;
+    }
+    let n = face as usize;
+    let mut out = vec![0u8; n * n * 6 * 4];
+    for f in 0..6 {
+        for y in 0..n {
+            for x in 0..n {
+                let a = (x as f32 + 0.5) / n as f32 * 2.0 - 1.0;
+                let b = (y as f32 + 0.5) / n as f32 * 2.0 - 1.0;
+                let d = match f {
+                    0 => Vec3::new(1.0, -b, -a),
+                    1 => Vec3::new(-1.0, -b, a),
+                    2 => Vec3::new(a, 1.0, b),
+                    3 => Vec3::new(a, -1.0, -b),
+                    4 => Vec3::new(a, -b, 1.0),
+                    _ => Vec3::new(-a, -b, -1.0),
+                };
+                let (u, v) = panorama_uv_for_dir(d);
+                let sx = ((u * w as f32) as usize).min(w - 1);
+                let sy = ((v * h as f32) as usize).min(h - 1);
+                let si = (sy * w + sx) * 4;
+                let di = ((f * n + y) * n + x) * 4;
+                out[di..di + 4].copy_from_slice(&data[si..si + 4]);
+            }
+        }
+    }
+    let mut cube = Image::new(
+        Extent3d {
+            width: face,
+            height: face * 6,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        out,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    cube.reinterpret_stacked_2d_as_array(6);
+    cube.texture_view_descriptor = Some(bevy::render::render_resource::TextureViewDescriptor {
+        dimension: Some(bevy::render::render_resource::TextureViewDimension::Cube),
+        ..default()
+    });
+    cube.sampler = ImageSampler::linear();
+    Some(cube)
+}
+
+/// Face size of the baked environment cubemap (6 x 96 x 96 RGBA = 221 KB).
+const ENV_CUBE_FACE: u32 = 96;
+/// Environment light strength (cd/m^2) for the SDR panorama.
+const ENV_LIGHT_INTENSITY: f32 = 520.0;
 
 #[allow(clippy::too_many_arguments)]
 fn spawn_courtside(
@@ -2463,6 +2733,73 @@ pub const _COURT_EXTENT: (f32, f32) = (COURT_HALF_LEN, COURT_HALF_WID);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The cubemap sampler must agree with the sky dome mesh: for every dome
+    /// vertex, the panorama texel the mesh shows in that direction is the one
+    /// `panorama_uv_for_dir` returns.
+    #[test]
+    fn cubemap_sampler_matches_sky_dome_mesh() {
+        use bevy::mesh::VertexAttributeValues;
+        let mesh: Mesh = Sphere::new(SKY_DOME_RADIUS).mesh().uv(64, 32);
+        let Some(VertexAttributeValues::Float32x3(pos)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION) else {
+            panic!("positions");
+        };
+        let Some(VertexAttributeValues::Float32x2(uv)) = mesh.attribute(Mesh::ATTRIBUTE_UV_0) else {
+            panic!("uvs");
+        };
+        let tf = Transform::from_xyz(0.0, 0.0, 0.0)
+            .with_scale(Vec3::new(-1.0, 1.0, 1.0))
+            .with_rotation(sky_dome_rotation());
+        let mut checked = 0;
+        for (p, t) in pos.iter().zip(uv.iter()) {
+            let world = tf.transform_point(Vec3::from(*p));
+            // Skip the poles (u is degenerate there) and the seam column.
+            if world.y.abs() > SKY_DOME_RADIUS * 0.95 || t[0] < 0.02 || t[0] > 0.98 {
+                continue;
+            }
+            let (u, v) = panorama_uv_for_dir(world);
+            assert!((u - t[0]).abs() < 0.01, "u {} vs mesh {} at {:?}", u, t[0], world);
+            assert!((v - t[1]).abs() < 0.01, "v {} vs mesh {} at {:?}", v, t[1], world);
+            checked += 1;
+        }
+        assert!(checked > 1000, "checked {checked}");
+    }
+
+    #[test]
+    fn cubemap_bakes_sky_up_and_ground_down() {
+        // Top half blue, bottom half green, like the bands test.
+        let (w, h) = (64u32, 32u32);
+        let mut data = vec![0u8; (w * h * 4) as usize];
+        for y in 0..h {
+            for x in 0..w {
+                let i = ((y * w + x) * 4) as usize;
+                if y < h / 2 {
+                    data[i + 2] = 255;
+                } else {
+                    data[i + 1] = 255;
+                }
+                data[i + 3] = 255;
+            }
+        }
+        let image = Image::new(
+            Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            TextureDimension::D2,
+            data,
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::all(),
+        );
+        let cube = panorama_cubemap(&image, 8).expect("cube");
+        assert_eq!(cube.texture_descriptor.size.depth_or_array_layers, 6);
+        let d = cube.data.as_ref().unwrap();
+        let face = |f: usize, x: usize, y: usize| {
+            let i = ((f * 8 + y) * 8 + x) * 4;
+            (d[i], d[i + 1], d[i + 2])
+        };
+        assert_eq!(face(2, 4, 4), (0, 0, 255), "+Y face is sky");
+        assert_eq!(face(3, 4, 4), (0, 255, 0), "-Y face is ground");
+        assert_eq!(face(0, 4, 1), (0, 0, 255), "+X upper rows are sky");
+        assert_eq!(face(0, 4, 6), (0, 255, 0), "+X lower rows are ground");
+    }
 
     #[test]
     fn panorama_bands_split_sky_and_horizon() {
