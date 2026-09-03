@@ -8,6 +8,7 @@ mod courtpaint;
 mod crowd;
 mod fx;
 mod gameplay;
+mod gym;
 mod input;
 mod quality;
 mod roster;
