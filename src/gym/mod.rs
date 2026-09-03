@@ -911,6 +911,104 @@ mod tests {
         }
     }
 
+    /// Counts how often each AI behaviour fires over one PRO-vs-PRO match and
+    /// prints the ticker lines it produced. Diagnostic; run with
+    /// `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn behavior_census() {
+        use crate::ai::{AiBrain, DefRole, Plan};
+        use std::collections::BTreeMap;
+        let mut gym = Gym::ai_vs_ai(PRO, PRO, 5);
+        let mut contest_ticks = 0u32;
+        let mut block_ticks = 0u32;
+        let mut help_ticks = 0u32;
+        let mut cut_ticks = 0u32;
+        let mut screen_ticks = 0u32;
+        let mut drive_ticks = 0u32;
+        let mut juke_ticks = 0u32;
+        let mut windup_ticks = 0u32;
+        let mut pass_ticks = 0u32;
+        let mut lines: BTreeMap<String, u32> = BTreeMap::new();
+        let mut last_line = String::new();
+        let mut steps = 0u64;
+        while !gym.done() && steps < MATCH_CAP_TICKS {
+            gym.step(Action::noop());
+            steps += 1;
+            let world = gym.world_mut();
+            for (pose, brain) in world.query::<(&Pose, &AiBrain)>().iter(world) {
+                contest_ticks += (*pose == Pose::Contest) as u32;
+                block_ticks += (*pose == Pose::Block) as u32;
+                help_ticks += (brain.role == DefRole::Help) as u32;
+                cut_ticks += (brain.cut_t > 0.0) as u32;
+                screen_ticks += (brain.screen_t > 0.0 || brain.roll_t > 0.0) as u32;
+                drive_ticks += matches!(brain.plan, Plan::Drive(_)) as u32;
+                juke_ticks += matches!(brain.plan, Plan::Juke(_)) as u32;
+                windup_ticks += (brain.plan == Plan::Shoot) as u32;
+            }
+            if let Some(s) = world
+                .query_filtered::<&BallState, With<Ball>>()
+                .iter(world)
+                .next()
+            {
+                pass_ticks += (s.hold == Hold::Pass) as u32;
+            }
+            let line = world.resource::<crate::gameplay::Ticker>().line.clone();
+            if line != last_line {
+                *lines.entry(line.clone()).or_default() += 1;
+                last_line = line;
+            }
+        }
+        let (h, a) = gym.score();
+        eprintln!(
+            "census {steps} ticks, {h}-{a}: contest {contest_ticks} block {block_ticks} help {help_ticks} cut {cut_ticks} screen {screen_ticks} drive {drive_ticks} juke {juke_ticks} windup {windup_ticks} pass {pass_ticks}"
+        );
+        for (l, n) in &lines {
+            eprintln!("  {n:>3}x {l}");
+        }
+    }
+
+    const MATCH_CAP_TICKS: u64 = 40_000;
+
+    /// A perfectly aimed jumper from every distance must drop through the real
+    /// rim/backboard physics (not just the pure `cylinder_score` math).
+    #[test]
+    fn green_jumpers_drop_in_the_live_sim() {
+        use crate::sim::{ballistic_velocity, flight_time_for_distance, GRAVITY, RIM_HEIGHT};
+        let mut misses = Vec::new();
+        for dist_i in 2..=12 {
+            let dist = dist_i as f32;
+            let mut gym = Gym::ai_vs_ai(PRO, PRO, 3);
+            let before = gym.score();
+            {
+                let world = gym.world_mut();
+                // Freeze everyone so nobody touches the ball mid-flight.
+                let mut q = world.query::<(&mut Transform, &Player)>();
+                for (mut t, p) in q.iter_mut(world) {
+                    t.translation = Vec3::new(if p.side == Side::Home { -12.0 } else { 12.0 }, 0.0, 6.5);
+                }
+                let mut bq = world.query_filtered::<(&mut Transform, &mut BallVel, &mut BallState), With<Ball>>();
+                let (mut bt, mut bv, mut bs) = bq.single_mut(world).unwrap();
+                let from = Vec3::new(HOOP_X - dist, 1.95, 0.0);
+                let hoop = [HOOP_X, RIM_HEIGHT, 0.0];
+                let v = ballistic_velocity(from.to_array(), hoop, flight_time_for_distance(dist), GRAVITY);
+                bt.translation = from;
+                bv.0 = Vec3::from_array(v);
+                bs.hold = Hold::Shot;
+                bs.holder = None;
+                bs.shooter = None;
+                bs.rim_hits = 0;
+            }
+            for _ in 0..200 {
+                gym.step(Action::noop());
+            }
+            if gym.score() == before {
+                misses.push(dist);
+            }
+        }
+        assert!(misses.is_empty(), "green jumpers missed from {misses:?} m");
+    }
+
     /// Regression guard for two sim bugs found while building the gym: the LCG
     /// returned only [0, 0.004] (every roll "succeeded") and `ai_decisions`
     /// launched shots from the dribble position instead of the solved release

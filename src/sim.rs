@@ -70,12 +70,20 @@ pub fn points_for(kind: ShotKind) -> u32 {
     }
 }
 
+/// Fixed sim step the ball is integrated with (`Time<Fixed>` default, 64 Hz).
+pub const SIM_DT: f32 = 1.0 / 64.0;
+
 /// Ballistic launch velocity to reach a target in `flight` seconds under gravity.
+///
+/// `integrate_ball` is semi-implicit Euler (`v -= g·dt; p += v·dt`), whose
+/// closed form lands `½·g·dt·t` below the analytic parabola — 15 cm on a
+/// three, enough to clip the front rim a tick early. Adding `½·g·dt` to the
+/// vertical component makes the discrete trajectory hit `to` exactly at `t`.
 pub fn ballistic_velocity(from: [f32; 3], to: [f32; 3], flight: f32, gravity: f32) -> [f32; 3] {
     let t = flight.max(0.18);
     [
         (to[0] - from[0]) / t,
-        (to[1] - from[1] + 0.5 * gravity * t * t) / t,
+        (to[1] - from[1] + 0.5 * gravity * t * t) / t + 0.5 * gravity * SIM_DT,
         (to[2] - from[2]) / t,
     ]
 }
