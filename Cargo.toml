@@ -7,6 +7,10 @@ license = "MIT"
 repository = "https://github.com/MisterousPanda/finnball"
 default-run = "finnball"
 
+[features]
+# Headless gym + evolutionary tuner (`src/gym`). Never part of the wasm build.
+gym = []
+
 [dependencies]
 # Only the Bevy pieces FINNBALL uses: the default 2d/3d/ui bundle also pulls in
 # glTF, animation, gizmos, scenes, sprites, SMAA/FXAA and vorbis, which is dead
