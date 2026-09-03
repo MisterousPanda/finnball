@@ -2,10 +2,15 @@
 //!
 //! A (1+λ) evolution strategy with Gaussian mutation in the normalised
 //! parameter box (`AiProfile::BOUNDS`) and a 1/5th-rule step-size adaptation.
+//! Only the *behaviour* knobs are searched; the raw skill dial
+//! (`AiProfile::SKILL_KNOBS`: reaction, lag, speed, skill, meter error,
+//! windup) stays at PRO's values so the search has to find smarter positioning
+//! and shot selection rather than just cranking accuracy.
 //! Fitness is measured over full simulated matches with common random numbers
 //! (every candidate in a generation sees the same seeds) against three
-//! opponents: the [`ROOKIE`] AI, the [`PRO`] AI, and the scripted human proxy
-//! (`scripted_driver` + PRO teammates). The score rewards point differential
+//! opponents: the [`ROOKIE`] AI, the hand-tuned [`HAND_PRO`] AI the search
+//! started from, and the scripted human proxy (`scripted_driver` + `HAND_PRO`
+//! teammates). The score rewards point differential
 //! *and* defense (opponent FG%, steals, blocks) and penalises a candidate that
 //! stops scoring itself.
 //!
@@ -24,6 +29,37 @@ use crate::roster::Side;
 
 /// A tie loops 30 s overtimes forever; cap a match well past regulation.
 pub const MATCH_CAP: u64 = 40_000;
+
+/// The hand-tuned PRO the search started from (kept for before/after reports;
+/// `report_profiles` prints it next to the shipped `PRO`).
+pub const HAND_PRO: AiProfile = AiProfile {
+    reaction: 0.28,
+    def_lag: 0.10,
+    speed: 0.96,
+    skill: 1.00,
+    meter_err: 0.08,
+    windup: 0.22,
+    pressure_dist: 1.05,
+    sag: 0.15,
+    closeout_dist: 0.70,
+    closeout_range: 4.00,
+    help_threshold: 5.50,
+    help_beaten: 1.00,
+    deny_t: 0.40,
+    deny_sag: 0.70,
+    steal_rate: 0.30,
+    steal_cooldown: 1.50,
+    block_aggr: 0.45,
+    lane_jump: 1.60,
+    shot_ev_min: 1.10,
+    late_clock: 7.00,
+    drive_gap: 1.60,
+    kick_dist: 1.60,
+    cut_gap: 2.80,
+    screen_rate: 0.50,
+    pass_open_w: 0.60,
+    juke_rate: 0.35,
+};
 
 /// Aggregate of one side over a series of matches.
 #[derive(Clone, Copy, Debug, Default)]
@@ -156,11 +192,13 @@ pub fn series(gym: &mut Gym, a: AiProfile, b: AiProfile, seeds: &[u64]) -> Serie
 }
 
 /// `cand` as the opposition (Away) against the scripted human proxy driving
-/// home slot 0 with PRO teammates — what the player actually meets.
+/// home slot 0 with `HAND_PRO` teammates — what the player actually meets.
+/// (`HAND_PRO`, not `PRO`, so re-running the search reproduces the shipped
+/// constants instead of chasing its own output.)
 pub fn vs_human_proxy(gym: &mut Gym, cand: AiProfile, seeds: &[u64]) -> SeriesStats {
     let mut s = SeriesStats::default();
     for &seed in seeds {
-        gym.set_profiles(PRO, cand);
+        gym.set_profiles(HAND_PRO, cand);
         gym.select(Side::Home, 0);
         gym.reset(seed);
         let mut rng = GymRng(seed ^ 0xA5A5_5A5A);
@@ -193,7 +231,7 @@ pub fn score_series(s: &SeriesStats) -> f32 {
 
 pub fn evaluate(gym: &mut Gym, cand: AiProfile, seeds: &[u64]) -> Eval {
     let vs_rookie = series(gym, cand, ROOKIE, seeds);
-    let vs_pro = series(gym, cand, PRO, seeds);
+    let vs_pro = series(gym, cand, HAND_PRO, seeds);
     let vs_human = vs_human_proxy(gym, cand, seeds);
     let fitness =
         (score_series(&vs_rookie) + score_series(&vs_pro) + 1.5 * score_series(&vs_human)) / 3.5;
@@ -212,11 +250,18 @@ fn gaussian(rng: &mut GymRng) -> f32 {
     (-2.0 * u1.ln()).sqrt() * (std::f32::consts::TAU * u2).cos()
 }
 
-/// Gaussian mutation of `p` in the normalised box; each coordinate moves with
-/// probability 0.7.
+/// Gaussian mutation of `p` in the normalised box; each *behaviour* coordinate
+/// moves with probability 0.7. The first [`AiProfile::SKILL_KNOBS`] entries
+/// (reaction, lag, speed, skill, meter error, windup) are frozen: they are the
+/// difficulty dial, and letting the search touch them just maxes them out
+/// instead of finding smarter positioning and shot selection.
 pub fn mutate(p: &AiProfile, sigma: f32, rng: &mut GymRng) -> AiProfile {
     let mut a = p.to_array();
-    for (v, (lo, hi)) in a.iter_mut().zip(AiProfile::BOUNDS.iter()) {
+    for (v, (lo, hi)) in a
+        .iter_mut()
+        .zip(AiProfile::BOUNDS.iter())
+        .skip(AiProfile::SKILL_KNOBS)
+    {
         if rng.f32() < 0.7 {
             let u = (*v - lo) / (hi - lo);
             let u = (u + gaussian(rng) * sigma).clamp(0.0, 1.0);
@@ -240,8 +285,8 @@ impl Default for EsConfig {
     fn default() -> Self {
         Self {
             gens: 40,
-            lambda: 12,
-            seeds_per_gen: 2,
+            lambda: 10,
+            seeds_per_gen: 4,
             sigma0: 0.12,
             threads: std::thread::available_parallelism()
                 .map(|n| n.get())
@@ -302,16 +347,27 @@ pub fn run_es(start: AiProfile, cfg: EsConfig, mut log: impl FnMut(&str)) -> (Ai
             })
             .map(|(i, e)| (i, *e))
             .unwrap();
-        let improved = bi != 0;
+        // Winner's curse guard: the best of λ noisy samples is biased upward,
+        // so a challenger must also beat the elite on a fresh set of seeds.
+        let mut improved = bi != 0;
+        let mut confirm = None;
+        if improved {
+            let fresh: Vec<u64> = (0..cfg.seeds_per_gen)
+                .map(|i| 500_000 + g as u64 * 100 + i as u64)
+                .collect();
+            let pair = evaluate_all(&[elite, cands[bi]], &fresh, cfg.threads);
+            improved = pair[1].fitness > pair[0].fitness;
+            confirm = Some((pair[0].fitness, pair[1].fitness));
+        }
         if improved {
             elite = cands[bi];
-            sigma = (sigma * 1.2).min(0.5);
+            sigma = (sigma * 1.15).min(0.3);
         } else {
-            sigma = (sigma * 0.85).max(0.02);
+            sigma = (sigma * 0.85).max(0.03);
         }
         elite_eval = if improved { best } else { evals[0] };
         log(&format!(
-            "gen {g:>3}  fit {:>+7.2} (elite {:>+7.2}) sigma {sigma:.3}  {}  | vsRookie {:+.1} vsPro {:+.1} vsHuman {:+.1} oppFG {:.0}/{:.0}/{:.0}%",
+            "gen {g:>3}  fit {:>+7.2} (elite {:>+7.2}) sigma {sigma:.3}  {}  | vsRookie {:+.1} vsPro {:+.1} vsHuman {:+.1} oppFG {:.0}/{:.0}/{:.0}%{}",
             best.fitness,
             evals[0].fitness,
             if improved { "IMPROVED" } else { "kept    " },
@@ -321,6 +377,9 @@ pub fn run_es(start: AiProfile, cfg: EsConfig, mut log: impl FnMut(&str)) -> (Ai
             elite_eval.vs_rookie.opp_fg_pct() * 100.0,
             elite_eval.vs_pro.opp_fg_pct() * 100.0,
             elite_eval.vs_human.opp_fg_pct() * 100.0,
+            confirm
+                .map(|(e, c)| format!("  confirm elite {e:+.2} vs challenger {c:+.2}"))
+                .unwrap_or_default(),
         ));
     }
     (elite, elite_eval)
@@ -396,15 +455,25 @@ pub fn report(seeds: &[u64]) -> String {
         "{:<28} {}\n",
         "matchup (row = subject)", "subject stats"
     ));
-    for (name, p) in [("ROOKIE", ROOKIE), ("PRO", PRO), ("LEGEND", LEGEND)] {
+    let presets = [
+        ("ROOKIE", ROOKIE),
+        ("HAND_PRO", HAND_PRO),
+        ("PRO", PRO),
+        ("LEGEND", LEGEND),
+    ];
+    for (name, p) in presets {
         let s = series(&mut gym, p, ROOKIE, seeds);
         out.push_str(&format!("{:<28} {}\n", format!("{name} vs ROOKIE"), s.line()));
     }
-    for (name, p) in [("PRO", PRO), ("LEGEND", LEGEND)] {
+    for (name, p) in [("HAND_PRO", HAND_PRO), ("PRO", PRO), ("LEGEND", LEGEND)] {
+        let s = series(&mut gym, p, HAND_PRO, seeds);
+        out.push_str(&format!("{:<28} {}\n", format!("{name} vs HAND_PRO"), s.line()));
+    }
+    for (name, p) in [("LEGEND", LEGEND)] {
         let s = series(&mut gym, p, PRO, seeds);
         out.push_str(&format!("{:<28} {}\n", format!("{name} vs PRO"), s.line()));
     }
-    for (name, p) in [("ROOKIE", ROOKIE), ("PRO", PRO), ("LEGEND", LEGEND)] {
+    for (name, p) in presets {
         let s = vs_human_proxy(&mut gym, p, seeds);
         out.push_str(&format!(
             "{:<28} {}\n",
@@ -436,13 +505,13 @@ mod tests {
     fn tune_pro_profile() {
         let cfg = EsConfig {
             gens: env_usize("FINN_TUNE_GENS", 40),
-            lambda: env_usize("FINN_TUNE_LAMBDA", 12),
-            seeds_per_gen: env_usize("FINN_TUNE_SEEDS", 2),
+            lambda: env_usize("FINN_TUNE_LAMBDA", 10),
+            seeds_per_gen: env_usize("FINN_TUNE_SEEDS", 4),
             threads: env_usize("FINN_TUNE_THREADS", EsConfig::default().threads),
             ..EsConfig::default()
         };
         eprintln!("tune: {cfg:?}");
-        let (best, eval) = run_es(PRO, cfg, |l| eprintln!("{l}"));
+        let (best, eval) = run_es(HAND_PRO, cfg, |l| eprintln!("{l}"));
         eprintln!("tune: best fitness {:+.2}", eval.fitness);
         eprintln!("{}", rust_literal("PRO", &best));
         eprintln!("{}", rust_literal("LEGEND", &legend_from(&best)));
@@ -453,8 +522,82 @@ mod tests {
     #[ignore]
     fn report_profiles() {
         let n = env_usize("FINN_REPORT_SEEDS", 5) as u64;
-        let seeds: Vec<u64> = (1..=n).collect();
+        let from = env_usize("FINN_REPORT_FROM", 1) as u64;
+        let seeds: Vec<u64> = (from..from + n).collect();
+        eprintln!("seeds {from}..{} ({n} seeds, each played home and away in AI-vs-AI rows)", from + n - 1);
         eprintln!("\n{}", report(&seeds));
+    }
+
+    // ---- proof that the presets differ, cheap enough for the default run ----
+
+    /// Seeds shared by the proof tests below (each is played home and away).
+    const PROOF_SEEDS: [u64; 4] = [11, 12, 13, 14];
+
+    #[test]
+    fn pro_beats_rookie_decisively_and_both_still_score() {
+        let mut gym = Gym::ai_vs_ai(PRO, PRO, 1);
+        let s = series(&mut gym, PRO, ROOKIE, &PROOF_SEEDS);
+        eprintln!("PRO vs ROOKIE   {}", s.line());
+        assert!(s.win_rate() >= 0.75, "PRO should win ≥ 75%: {}", s.line());
+        assert!(s.diff() >= 8.0, "PRO should win by ≥ 8/match: {}", s.line());
+        assert!(s.avg_pts() >= 16.0, "PRO must keep scoring: {}", s.line());
+        assert!(s.avg_opp_pts() >= 6.0, "ROOKIE must not be shut out: {}", s.line());
+        assert!(
+            s.stl_per_match() > s.opp_stl as f32 / s.matches as f32,
+            "PRO should force more steals than it gives up: {}",
+            s.line()
+        );
+    }
+
+    #[test]
+    fn legend_beats_pro() {
+        let mut gym = Gym::ai_vs_ai(PRO, PRO, 1);
+        let s = series(&mut gym, LEGEND, PRO, &PROOF_SEEDS);
+        eprintln!("LEGEND vs PRO   {}", s.line());
+        assert!(s.win_rate() >= 0.6, "LEGEND should win ≥ 60%: {}", s.line());
+        assert!(s.diff() >= 3.0, "LEGEND should win by ≥ 3/match: {}", s.line());
+        assert!(s.avg_opp_pts() >= 8.0, "PRO must still score on LEGEND: {}", s.line());
+    }
+
+    /// Same non-adapting offense (scripted human + PRO teammates) against the
+    /// ROOKIE and PRO defenses: PRO has to make the *shots* worse, not just win.
+    #[test]
+    fn pro_defense_lowers_the_same_offenses_fg_pct() {
+        let seeds: Vec<u64> = (21..=30).collect();
+        let mut gym = Gym::ai_vs_ai(PRO, PRO, 1);
+        let vs_rookie = vs_human_proxy(&mut gym, ROOKIE, &seeds);
+        let vs_pro = vs_human_proxy(&mut gym, PRO, &seeds);
+        eprintln!("offense vs ROOKIE D {}", vs_rookie.line());
+        eprintln!("offense vs PRO D    {}", vs_pro.line());
+        assert!(vs_rookie.opp_fga >= 40 && vs_pro.opp_fga >= 40, "too few shots to judge");
+        assert!(
+            vs_pro.opp_fg_pct() + 0.03 <= vs_rookie.opp_fg_pct(),
+            "PRO defense should cut FG% by ≥ 3 pts: {:.1}% vs {:.1}%",
+            vs_rookie.opp_fg_pct() * 100.0,
+            vs_pro.opp_fg_pct() * 100.0
+        );
+        assert!(
+            vs_pro.avg_opp_pts() + 2.0 <= vs_rookie.avg_opp_pts(),
+            "PRO defense should allow ≥ 2 fewer points per match: {:.1} vs {:.1}",
+            vs_rookie.avg_opp_pts(),
+            vs_pro.avg_opp_pts()
+        );
+        assert!(
+            vs_pro.stl_per_match() + vs_pro.blk_per_match()
+                > vs_rookie.stl_per_match() + vs_rookie.blk_per_match(),
+            "PRO defense should produce more steals + blocks"
+        );
+    }
+
+    /// All-AI matches are bit-for-bit reproducible from the seed.
+    #[test]
+    fn all_ai_series_is_deterministic() {
+        let mut a = Gym::ai_vs_ai(PRO, PRO, 1);
+        let mut b = Gym::ai_vs_ai(ROOKIE, LEGEND, 99);
+        let ra = series(&mut a, LEGEND, PRO, &[5]);
+        let rb = series(&mut b, LEGEND, PRO, &[5]);
+        assert_eq!(format!("{ra:?}"), format!("{rb:?}"));
+        assert!(ra.pts + ra.opp_pts > 0, "the match must produce points");
     }
 
     #[test]
@@ -465,6 +608,11 @@ mod tests {
             let m = mutate(&PRO, 0.2, &mut rng);
             assert_eq!(m.clamped(), m);
             moved |= m != PRO;
+            // The difficulty dial is not the search's to turn.
+            assert_eq!(
+                m.to_array()[..AiProfile::SKILL_KNOBS],
+                PRO.to_array()[..AiProfile::SKILL_KNOBS]
+            );
         }
         assert!(moved);
         assert_eq!(legend_from(&PRO).clamped(), legend_from(&PRO));

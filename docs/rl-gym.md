@@ -555,3 +555,102 @@ score (regression guard for the RNG + release-point fixes);
 
 Files: `docs/rl-gym.md` (new), `src/gym/mod.rs` (new), `src/main.rs`
 (`mod gym;` added).
+
+---
+
+## 8. What shipped: behaviours, `AiProfile`, and the ES run
+
+Everything below is in the game, not just the gym. `src/ai.rs` was rewritten
+around a single `AiProfile` struct (26 numeric knobs) with three presets
+(`ROOKIE`, `PRO`, `LEGEND`) selected from the main menu (`CPU DIFFICULTY` row,
+`D` / arrows / `LB`/`RB`) and shown in the HUD match strip.
+
+### 8.1 Behaviours
+
+Defense (`ai::assign_defense`, `ai::defend_move`, `ai::shot_in_air_move`):
+
+* man assignment with 1 m hysteresis; closest defender takes the ball;
+* on-ball stance between handler and hoop that tightens near the paint
+  (`pressure_dist`, `sag`);
+* closeouts: when the handler winds up (AI) or holds the shot meter (human),
+  the on-ball defender sprints to `closeout_dist` and raises his hands
+  (`Pose::Contest`, new rig pose). `sim::contest_with_hands` makes a hands-up
+  contest ~1.5× stronger, and both the human path (`gameplay::nearest_contest`)
+  and the AI path (`ai::contest_on`) roll the make against it at *release*;
+* help rotation when the ball beats its man near the rim (`help_threshold`,
+  `help_beaten`): nearest off-ball defender slides to the paint, the third zones
+  the remaining attackers; HUD ticker `HELP D`;
+* ball-you-man denial off the ball (`deny_t`, `deny_sag`) and pass-lane jumps
+  (`lane_jump`) that end in interceptions (`gameplay::pickup_loose_ball` with
+  `sim::intercept_reach`), ticker `PICKED OFF`;
+* reach-in lunges and timed block jumps go through the *same*
+  `steal_attempts` / `block_attempts` systems as the human buttons via the
+  `AiRequests` queue (`steal_rate`, `steal_cooldown`, `block_aggr`).
+
+Offense (`ai::handler_move`, `ai::offball_move`, `ai::ai_decisions`):
+
+* spacing to weak-side wing / strong-side corner, both corners on a drive;
+* backdoor cuts when the man sleeps or leaves to help (`cut_gap`);
+* screen-and-roll by the strongest teammate (`screen_rate`);
+* drive-and-kick: a drive that draws a second defender inside `kick_dist`
+  kicks to the best catch-and-shoot option;
+* expected-points shot selection (`sim::shot_ev`) that includes contest, the
+  shot clock (`shot_ev_min`, `late_clock`) and pass-lane risk; jumpers wind up
+  for `windup` seconds so the defense gets to contest; dunks into a hands-up
+  rim protector are a coin flip, so the handler passes out instead;
+* dribble jukes when pressured (`juke_rate`).
+
+Two sim fixes fell out of the census: `sim::ballistic_velocity` now compensates
+the semi-implicit Euler drift (green three-pointers clipped the front iron —
+§3.3 of this document), and `block_attempts` measures horizontal distance.
+
+### 8.2 The search
+
+`gym::tune::run_es` is a (1+λ)-ES over the 20 behaviour knobs (the six
+skill/reaction knobs are frozen — they are the difficulty dial, and letting the
+search touch them just maxed them out). Fitness per candidate = points
+differential + 20·(0.45 − opp FG%) + steals/blocks terms − penalties for not
+scoring or for a turnover fest, averaged over three opponents with common
+random numbers: `ROOKIE`, the hand-tuned `HAND_PRO` start point, and the
+scripted human proxy (1.5×). The best of λ noisy samples is biased upward, so a
+challenger must also beat the elite on a fresh seed set before it is accepted.
+
+Shipped run: 40 generations × 10 mutants × 4 seeds (2 sides) × 3 opponents,
+seed 7, ~17 min on 4 threads; 20 confirmed improvements. Reproduce with
+
+```
+CARGO_TARGET_DIR=/workspace/target cargo test --release --offline tune_pro_profile -- --ignored --nocapture
+FINN_REPORT_SEEDS=30 FINN_REPORT_FROM=1000 cargo test --release --offline report_profiles -- --ignored --nocapture
+```
+
+`PRO` = the ES output with `screen_rate` held at 0.35 (the search found screens
+fitness-neutral; they stay because the player should see them). `LEGEND` =
+`legend_from(PRO)`: same positioning, 0.12 s reactions, no defensive lag,
+skill 1.12, faster windup, more lane jumps / blocks / jukes.
+
+### 8.3 Before / after (held-out seeds 1000–1029, 60 AI-vs-AI matches per row, 30 vs the proxy)
+
+| subject vs opponent      | W%  | pts       | diff  | FG%  | opp FG% | stl/match | blk/match |
+|--------------------------|-----|-----------|-------|------|---------|-----------|-----------|
+| ROOKIE vs ROOKIE (baseline) | 50 | 23.1–23.1 | 0.0 | 39.4 | 39.4 | 1.80 | 0.50 |
+| HAND_PRO vs ROOKIE       | 95  | 34.7–17.5 | +17.2 | 49.3 | 37.7    | 7.53      | 3.03      |
+| PRO vs ROOKIE            | 98  | 34.9–15.4 | +19.4 | 47.3 | 34.7    | 8.13      | 4.65      |
+| LEGEND vs ROOKIE         | 97  | 39.7–17.3 | +22.4 | 61.5 | 34.8    | 8.25      | 5.73      |
+| PRO vs HAND_PRO          | 67  | 28.1–26.2 | +1.9  | 40.9 | 39.5    | 3.20      | 5.88      |
+| LEGEND vs PRO            | 80  | 31.4–23.5 | +7.9  | 45.4 | 35.9    | 5.32      | 7.45      |
+| ROOKIE vs human proxy    | 57  | 19.3–17.4 | +1.9  | 28.2 | 27.2    | 1.47      | 0.53      |
+| PRO vs human proxy       | 97  | 27.2–13.5 | +13.7 | 38.0 | 21.6    | 2.80      | 5.57      |
+| LEGEND vs human proxy    | 100 | 38.1–10.4 | +27.7 | 52.9 | 15.3    | 3.40      | 6.27      |
+
+Matches are 4 × 60 s. The proxy rows are what the player meets: the same
+scripted rim-attacker scores 17.4 a match on ROOKIE, 13.5 on PRO, 10.4 on
+LEGEND, and its team's FG% drops 27 → 22 → 15 while steals + blocks against it
+go 2.0 → 8.4 → 9.7 per match.
+
+### 8.4 Tests
+
+Default `cargo test --offline` (86 tests, ~9 s in the optimised test profile)
+now includes `gym::tune::tests::{pro_beats_rookie_decisively_and_both_still_score,
+legend_beats_pro, pro_defense_lowers_the_same_offenses_fg_pct,
+all_ai_series_is_deterministic}` plus live-sim regressions for green jumpers
+and clanked dunks. The heavy search and the report are `#[ignore]`.
