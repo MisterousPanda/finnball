@@ -119,11 +119,21 @@ pub struct AiProfile {
     pub juke_rate: f32,
 }
 
+// The vector view is only walked by the gym's search; the game reads fields.
+#[cfg_attr(not(any(test, feature = "gym")), allow(dead_code))]
 impl AiProfile {
     /// Number of tunables; the ES search vector length.
     pub const N: usize = 26;
+    /// The first `SKILL_KNOBS` entries of `to_array` (reaction, def_lag, speed,
+    /// skill, meter_err, windup) are the raw difficulty dial and are held fixed
+    /// by the gym search, which only tunes behaviour.
+    pub const SKILL_KNOBS: usize = 6;
 
-    /// (min, max) search box per parameter, in `to_array` order.
+    /// (min, max) search box per parameter, in `to_array` order. The box is
+    /// also a design constraint: a PRO/LEGEND defender must always close out
+    /// (`closeout_range` ≥ 2.5 m, hands up inside 1.1 m) and a handler may not
+    /// sit on the ball until the buzzer (`late_clock` ≥ 3 s). ROOKIE sits
+    /// outside it on purpose.
     pub const BOUNDS: [(f32, f32); Self::N] = [
         (0.10, 0.70), // reaction
         (0.00, 0.50), // def_lag
@@ -133,8 +143,8 @@ impl AiProfile {
         (0.05, 0.50), // windup
         (0.60, 2.20), // pressure_dist
         (0.00, 0.60), // sag
-        (0.45, 1.60), // closeout_dist
-        (1.50, 6.00), // closeout_range
+        (0.45, 1.10), // closeout_dist
+        (2.50, 6.00), // closeout_range
         (2.50, 7.50), // help_threshold
         (0.20, 2.50), // help_beaten
         (0.00, 0.80), // deny_t
@@ -144,7 +154,7 @@ impl AiProfile {
         (0.00, 0.80), // block_aggr
         (0.00, 3.00), // lane_jump
         (0.50, 1.70), // shot_ev_min
-        (2.00, 10.0), // late_clock
+        (3.00, 10.0), // late_clock
         (0.60, 3.00), // drive_gap
         (0.60, 3.00), // kick_dist
         (1.20, 5.00), // cut_gap
@@ -255,8 +265,11 @@ pub const ROOKIE: AiProfile = AiProfile {
     juke_rate: 0.00,
 };
 
-/// Default opponent and the human's AI teammates. Tuned by `gym::tune`
-/// (see `docs/rl-gym.md` §8 for the run).
+/// Default opponent and the human's AI teammates. Behaviour knobs tuned by the
+/// (1+λ)-ES in `gym::tune` (40 gens × 10 mutants × 4 seeds, winner's-curse
+/// confirmation, seed 7) from `gym::tune::HAND_PRO`; `screen_rate` held at 0.35
+/// because the search found screens fitness-neutral and they are a behaviour
+/// the player should see. See `docs/rl-gym.md` §8.
 pub const PRO: AiProfile = AiProfile {
     reaction: 0.28,
     def_lag: 0.10,
@@ -264,56 +277,57 @@ pub const PRO: AiProfile = AiProfile {
     skill: 1.00,
     meter_err: 0.08,
     windup: 0.22,
-    pressure_dist: 1.05,
+    pressure_dist: 1.08,
     sag: 0.15,
-    closeout_dist: 0.70,
-    closeout_range: 4.00,
-    help_threshold: 5.50,
-    help_beaten: 1.00,
-    deny_t: 0.40,
-    deny_sag: 0.70,
-    steal_rate: 0.30,
-    steal_cooldown: 1.50,
-    block_aggr: 0.45,
-    lane_jump: 1.60,
-    shot_ev_min: 1.10,
-    late_clock: 7.00,
-    drive_gap: 1.60,
-    kick_dist: 1.60,
-    cut_gap: 2.80,
-    screen_rate: 0.50,
-    pass_open_w: 0.60,
-    juke_rate: 0.35,
+    closeout_dist: 0.66,
+    closeout_range: 3.31,
+    help_threshold: 5.62,
+    help_beaten: 0.45,
+    deny_t: 0.52,
+    deny_sag: 0.82,
+    steal_rate: 0.14,
+    steal_cooldown: 1.18,
+    block_aggr: 0.71,
+    lane_jump: 2.01,
+    shot_ev_min: 0.98,
+    late_clock: 8.57,
+    drive_gap: 1.79,
+    kick_dist: 1.50,
+    cut_gap: 2.09,
+    screen_rate: 0.35,
+    pass_open_w: 0.75,
+    juke_rate: 0.64,
 };
 
-/// PRO's positioning with instant reactions and elite touch.
+/// PRO's tuned positioning with instant reactions, elite touch and more
+/// aggression (`gym::tune::legend_from(PRO)`).
 pub const LEGEND: AiProfile = AiProfile {
     reaction: 0.12,
     def_lag: 0.00,
     speed: 1.00,
     skill: 1.12,
     meter_err: 0.02,
-    windup: 0.12,
-    pressure_dist: 0.90,
-    sag: 0.10,
-    closeout_dist: 0.60,
-    closeout_range: 5.50,
-    help_threshold: 6.00,
-    help_beaten: 0.70,
-    deny_t: 0.50,
-    deny_sag: 0.80,
-    steal_rate: 0.45,
-    steal_cooldown: 1.00,
-    block_aggr: 0.60,
-    lane_jump: 2.20,
-    shot_ev_min: 1.15,
-    late_clock: 7.00,
-    drive_gap: 1.40,
-    kick_dist: 1.80,
-    cut_gap: 2.40,
-    screen_rate: 0.80,
-    pass_open_w: 0.70,
-    juke_rate: 0.55,
+    windup: 0.13,
+    pressure_dist: 0.97,
+    sag: 0.15,
+    closeout_dist: 0.66,
+    closeout_range: 4.81,
+    help_threshold: 5.62,
+    help_beaten: 0.31,
+    deny_t: 0.62,
+    deny_sag: 0.82,
+    steal_rate: 0.19,
+    steal_cooldown: 0.83,
+    block_aggr: 0.80,
+    lane_jump: 2.51,
+    shot_ev_min: 0.98,
+    late_clock: 8.57,
+    drive_gap: 1.79,
+    kick_dist: 1.50,
+    cut_gap: 2.09,
+    screen_rate: 0.52,
+    pass_open_w: 0.75,
+    juke_rate: 0.84,
 };
 
 /// Which profile each bench plays with. Filled from `MatchConfig::difficulty`
@@ -1482,8 +1496,15 @@ fn ai_decisions(
     } else {
         prof.shot_ev_min
     };
-    let can_dunk = paint && dist < 2.8 && me.r.dunk > 72.0 && ground(me.vel).length() > 2.0;
     let contest_now = contest_on(&snaps, me.e, me.side, me.pos);
+    // A rim protector with his hands up turns a dunk into a coin flip, so the
+    // handler only goes up through light traffic (or when the clock says so).
+    let dunk_chance = (0.86 * prof.skill * (1.0 - 0.5 * contest_now)).min(0.96);
+    let can_dunk = paint
+        && dist < 2.8
+        && me.r.dunk > 72.0
+        && ground(me.vel).length() > 2.0
+        && (contest_now < 0.6 || late || rim_crowd == 0);
     let layup_ok = paint && dist < 2.8 && (contest_now < 0.55 || late || !def_in_front);
 
     enum Choice {
@@ -1551,7 +1572,7 @@ fn ai_decisions(
             drop(brain);
             release_shot(
                 &me,
-                (0.86 * prof.skill).min(0.96),
+                dunk_chance,
                 false,
                 true,
                 &mut rng,
@@ -1664,7 +1685,13 @@ fn release_shot(
     };
 
     let mut target = hoop;
-    if rng.f32() > chance {
+    let made = rng.f32() <= chance;
+    if dunk {
+        // A stuffed dunk clanks off the front iron toward the shooter.
+        if !made {
+            target += ground(me.pos - hoop).normalize_or_zero() * 0.32 + Vec3::Y * 0.05;
+        }
+    } else if !made {
         target += Vec3::new(
             rng.range(-0.55, 0.55),
             rng.range(0.05, 0.45),
@@ -1690,7 +1717,7 @@ fn release_shot(
     };
     let from = Vec3::new(me.pos.x, height, me.pos.z);
     btf.translation = from;
-    let aim = if dunk {
+    let aim = if dunk && made {
         [hoop.x, hoop.y + 0.12, hoop.z]
     } else {
         [target.x, target.y, target.z]
@@ -1728,7 +1755,9 @@ mod tests {
         for p in [ROOKIE, PRO, LEGEND] {
             let back = AiProfile::from_array(p.to_array());
             assert_eq!(back, p);
-            assert_eq!(p.clamped(), p, "preset must sit inside the search box");
+        }
+        for p in [PRO, LEGEND] {
+            assert_eq!(p.clamped(), p, "tuned preset must sit inside the search box");
         }
         assert!(LEGEND.reaction < PRO.reaction && PRO.reaction < ROOKIE.reaction);
         assert!(LEGEND.skill > PRO.skill && PRO.skill > ROOKIE.skill);

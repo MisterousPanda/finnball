@@ -759,7 +759,7 @@ pub fn scripted_driver(obs: &[f32], step: u64, rng: &mut GymRng) -> Action {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::{LEGEND, PRO, ROOKIE};
+    use crate::ai::PRO;
 
     fn scripted(obs: &[f32], step: u64, rng: &mut GymRng) -> Action {
         scripted_driver(obs, step, rng)
@@ -969,6 +969,52 @@ mod tests {
     }
 
     const MATCH_CAP_TICKS: u64 = 40_000;
+
+    /// A stuffed AI dunk (aimed at the front iron) must not drop anyway.
+    #[test]
+    fn clanked_dunks_do_not_score() {
+        use crate::sim::{ballistic_velocity, GRAVITY, RIM_HEIGHT};
+        let mut drops = 0;
+        let mut tries = 0;
+        for i in 0..12 {
+            let ang = i as f32 * 0.5 - 2.75;
+            for dist in [1.0f32, 1.8, 2.6] {
+                tries += 1;
+                let mut gym = Gym::ai_vs_ai(PRO, PRO, 3);
+                let before = gym.score();
+                {
+                    let world = gym.world_mut();
+                    let mut q = world.query::<(&mut Transform, &Player)>();
+                    for (mut t, p) in q.iter_mut(world) {
+                        t.translation = Vec3::new(if p.side == Side::Home { -12.0 } else { 12.0 }, 0.0, 6.5);
+                    }
+                    let mut bq = world.query_filtered::<(&mut Transform, &mut BallVel, &mut BallState), With<Ball>>();
+                    let (mut bt, mut bv, mut bs) = bq.single_mut(world).unwrap();
+                    let hoop = Vec3::new(HOOP_X, 0.0, 0.0);
+                    let me = hoop + Vec3::new(-ang.cos() * dist, 0.0, ang.sin() * dist);
+                    let from = Vec3::new(me.x, 1.8, me.z);
+                    let target = Vec3::new(HOOP_X, RIM_HEIGHT, 0.0)
+                        + (me - hoop).normalize() * 0.32
+                        + Vec3::Y * 0.05;
+                    let v = ballistic_velocity(from.to_array(), target.to_array(), 0.55, GRAVITY);
+                    bt.translation = from;
+                    bv.0 = Vec3::from_array(v);
+                    bs.hold = Hold::Shot;
+                    bs.holder = None;
+                    bs.shooter = None;
+                    bs.rim_hits = 0;
+                }
+                for _ in 0..200 {
+                    gym.step(Action::noop());
+                }
+                if gym.score() != before {
+                    drops += 1;
+                }
+            }
+        }
+        eprintln!("clanked dunks: {drops}/{tries} dropped");
+        assert!(drops * 5 <= tries, "too many stuffed dunks still scored: {drops}/{tries}");
+    }
 
     /// A perfectly aimed jumper from every distance must drop through the real
     /// rim/backboard physics (not just the pure `cylinder_score` math).

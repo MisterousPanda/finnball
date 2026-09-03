@@ -50,8 +50,6 @@ pub enum Difficulty {
 }
 
 impl Difficulty {
-    pub const ALL: [Difficulty; 3] = [Difficulty::Rookie, Difficulty::Pro, Difficulty::Legend];
-
     pub fn label(self) -> &'static str {
         match self {
             Difficulty::Rookie => "ROOKIE",
