@@ -93,9 +93,12 @@ pub fn apply_touch(
     buttons: Query<(&Interaction, &TouchBtn)>,
     mut state: ResMut<TouchState>,
     mut intent: ResMut<PlayerIntent>,
+    ui_scale: Res<UiScale>,
     mut knobs: Query<&mut Node, With<StickKnob>>,
     mut rings: Query<(&mut Node, &mut Visibility), (With<StickRing>, Without<StickKnob>)>,
 ) {
+    // UI units are logical px divided by UiScale; the stick math is in logical px.
+    let inv = 1.0 / ui_scale.0.max(0.1);
     let Ok(window) = windows.single() else {
         return;
     };
@@ -135,16 +138,16 @@ pub fn apply_touch(
     for (mut node, mut vis) in &mut rings {
         if state.stick_id.is_some() {
             *vis = Visibility::Visible;
-            node.left = px(state.stick_origin.x - STICK_RADIUS);
-            node.top = px(state.stick_origin.y - STICK_RADIUS);
+            node.left = px((state.stick_origin.x - STICK_RADIUS) * inv);
+            node.top = px((state.stick_origin.y - STICK_RADIUS) * inv);
         } else {
             *vis = Visibility::Hidden;
         }
     }
     for mut node in &mut knobs {
         let off = state.stick * (STICK_RADIUS - 18.0);
-        node.left = px(STICK_RADIUS - 18.0 + off.x);
-        node.top = px(STICK_RADIUS - 18.0 + off.y);
+        node.left = px((STICK_RADIUS - 18.0 + off.x) * inv);
+        node.top = px((STICK_RADIUS - 18.0 + off.y) * inv);
     }
 
     // SHOOT is a hold: `Interaction::Pressed` stays set while the finger is down,
@@ -187,7 +190,10 @@ pub fn tap_buttons(
     }
 }
 
-fn spawn_touch_ui(mut commands: Commands, state: Res<TouchState>) {
+fn spawn_touch_ui(mut commands: Commands, state: Res<TouchState>, ui_scale: Res<UiScale>) {
+    // Touch targets must stay finger-sized: undo the global UiScale that shrinks
+    // the HUD on small screens.
+    let k = 1.0 / ui_scale.0.max(0.1);
     let display = if state.seen {
         Display::Flex
     } else {
@@ -217,8 +223,8 @@ fn spawn_touch_ui(mut commands: Commands, state: Res<TouchState>) {
                 Pickable::IGNORE,
                 Node {
                     position_type: PositionType::Absolute,
-                    width: px(STICK_RADIUS * 2.0),
-                    height: px(STICK_RADIUS * 2.0),
+                    width: px(STICK_RADIUS * 2.0 * k),
+                    height: px(STICK_RADIUS * 2.0 * k),
                     border: UiRect::all(px(2)),
                     border_radius: BorderRadius::MAX,
                     ..default()
@@ -230,10 +236,10 @@ fn spawn_touch_ui(mut commands: Commands, state: Res<TouchState>) {
                     Pickable::IGNORE,
                     Node {
                         position_type: PositionType::Absolute,
-                        width: px(36),
-                        height: px(36),
-                        left: px(STICK_RADIUS - 18.0),
-                        top: px(STICK_RADIUS - 18.0),
+                        width: px(36.0 * k),
+                        height: px(36.0 * k),
+                        left: px((STICK_RADIUS - 18.0) * k),
+                        top: px((STICK_RADIUS - 18.0) * k),
                         border_radius: BorderRadius::MAX,
                         ..default()
                     },
@@ -246,15 +252,15 @@ fn spawn_touch_ui(mut commands: Commands, state: Res<TouchState>) {
                 Pickable::IGNORE,
                 Node {
                     position_type: PositionType::Absolute,
-                    right: px(12),
-                    top: px(52),
-                    column_gap: px(8),
+                    right: px(12.0 * k),
+                    top: px(52.0 * k),
+                    column_gap: px(8.0 * k),
                     ..default()
                 },
                 children![
-                    small_btn("MENU", TouchBtn::Menu, MAGENTA, true),
-                    small_btn("SWITCH", TouchBtn::Switch, CYAN, false),
-                    small_btn("PAUSE", TouchBtn::Pause, CYAN, false),
+                    small_btn("MENU", TouchBtn::Menu, MAGENTA, true, k),
+                    small_btn("SWITCH", TouchBtn::Switch, CYAN, false, k),
+                    small_btn("PAUSE", TouchBtn::Pause, CYAN, false, k),
                 ],
             ));
 
@@ -263,36 +269,36 @@ fn spawn_touch_ui(mut commands: Commands, state: Res<TouchState>) {
                 Pickable::IGNORE,
                 Node {
                     position_type: PositionType::Absolute,
-                    right: px(14),
-                    bottom: px(18),
+                    right: px(14.0 * k),
+                    bottom: px(18.0 * k),
                     flex_direction: FlexDirection::Column,
                     align_items: AlignItems::FlexEnd,
-                    row_gap: px(10),
+                    row_gap: px(10.0 * k),
                     ..default()
                 },
                 children![
                     (
                         Pickable::IGNORE,
                         Node {
-                            column_gap: px(10),
+                            column_gap: px(10.0 * k),
                             ..default()
                         },
                         children![
-                            round_btn("BLOCK", TouchBtn::Block, 60.0, TEXT),
-                            round_btn("STEAL", TouchBtn::Steal, 60.0, MAGENTA),
-                            round_btn("DUNK", TouchBtn::Dunk, 60.0, GOLD),
+                            round_btn("BLOCK", TouchBtn::Block, 60.0, TEXT, k),
+                            round_btn("STEAL", TouchBtn::Steal, 60.0, MAGENTA, k),
+                            round_btn("DUNK", TouchBtn::Dunk, 60.0, GOLD, k),
                         ],
                     ),
                     (
                         Pickable::IGNORE,
                         Node {
-                            column_gap: px(10),
+                            column_gap: px(10.0 * k),
                             align_items: AlignItems::Center,
                             ..default()
                         },
                         children![
-                            round_btn("PASS", TouchBtn::Pass, 66.0, CYAN),
-                            round_btn("SHOOT", TouchBtn::Shoot, 96.0, GOLD),
+                            round_btn("PASS", TouchBtn::Pass, 66.0, CYAN, k),
+                            round_btn("SHOOT", TouchBtn::Shoot, 96.0, GOLD, k),
                         ],
                     ),
                 ],
@@ -300,13 +306,13 @@ fn spawn_touch_ui(mut commands: Commands, state: Res<TouchState>) {
         });
 }
 
-fn round_btn(label: &'static str, btn: TouchBtn, size: f32, tint: Color) -> impl Bundle {
+fn round_btn(label: &'static str, btn: TouchBtn, size: f32, tint: Color, k: f32) -> impl Bundle {
     (
         Button,
         btn,
         Node {
-            width: px(size),
-            height: px(size),
+            width: px(size * k),
+            height: px(size * k),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
             border: UiRect::all(px(2)),
@@ -317,19 +323,19 @@ fn round_btn(label: &'static str, btn: TouchBtn, size: f32, tint: Color) -> impl
         BackgroundColor(Color::srgba(0.02, 0.04, 0.09, 0.62)),
         children![(
             Text::new(label),
-            title_font(if size > 80.0 { 16.0 } else { 11.0 }),
+            title_font(if size > 80.0 { 16.0 * k } else { 11.0 * k }),
             TextColor(tint),
             Pickable::IGNORE,
         )],
     )
 }
 
-fn small_btn(label: &'static str, btn: TouchBtn, tint: Color, pause_only: bool) -> impl Bundle {
+fn small_btn(label: &'static str, btn: TouchBtn, tint: Color, pause_only: bool, k: f32) -> impl Bundle {
     let base = (
         Button,
         btn,
         Node {
-            padding: UiRect::axes(px(12), px(8)),
+            padding: UiRect::axes(px(12.0 * k), px(8.0 * k)),
             border: UiRect::all(px(1)),
             display: if pause_only {
                 Display::None
@@ -343,7 +349,7 @@ fn small_btn(label: &'static str, btn: TouchBtn, tint: Color, pause_only: bool) 
         BackgroundColor(Color::srgba(0.02, 0.04, 0.09, 0.62)),
         children![(
             Text::new(label),
-            title_font(11.0),
+            title_font(11.0 * k),
             TextColor(tint),
             Pickable::IGNORE,
         )],

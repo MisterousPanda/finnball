@@ -105,6 +105,30 @@
         background: #05070d;
         touch-action: none;
       }
+      #rotate {
+        display: none;
+        position: fixed;
+        left: 50%;
+        bottom: 14px;
+        transform: translateX(-50%);
+        padding: 8px 14px;
+        border: 1px solid rgba(0, 229, 255, 0.6);
+        border-radius: 8px;
+        background: rgba(2, 4, 12, 0.78);
+        color: #9ff;
+        font: 13px/1.3 ui-monospace, Menlo, monospace;
+        letter-spacing: 0.04em;
+        pointer-events: none;
+        z-index: 9;
+        animation: rotate-fade 6s ease-in 1 forwards;
+      }
+      @keyframes rotate-fade {
+        0%, 75% { opacity: 1; }
+        100% { opacity: 0; }
+      }
+      @media (orientation: portrait) and (max-width: 600px) and (pointer: coarse) {
+        #rotate { display: block; }
+      }
     </style>
   </head>
   <body>
@@ -114,6 +138,28 @@
       <div class="bar"><i></i></div>
     </div>
     <canvas id="bevy"></canvas>
+    <script>
+      // Phones report a 3x devicePixelRatio; rendering an HDR scene at native
+      // resolution there is what pushes iOS Safari over its memory limit and
+      // gets the tab killed ("A problem repeatedly occurred"). winit sizes the
+      // canvas backing store from devicePixelRatio, so capping it here renders
+      // fewer pixels while the CSS size (and layout) stay the same.
+      (function () {
+        const ua = navigator.userAgent || "";
+        const touch = (navigator.maxTouchPoints || 0) > 0;
+        const phone = /iPhone|iPod|Android.*Mobile/i.test(ua) || (touch && Math.min(screen.width, screen.height) < 500);
+        const tablet = !phone && (/iPad|Android/i.test(ua) || (touch && /Macintosh/.test(ua)));
+        const cap = phone ? 1.5 : tablet ? 2 : 0;
+        if (cap) {
+          const real = window.devicePixelRatio || 1;
+          const dpr = Math.min(real, cap);
+          if (dpr < real) {
+            Object.defineProperty(window, "devicePixelRatio", { get: () => dpr, configurable: true });
+            window.__finnballDpr = { real, dpr };
+          }
+        }
+      })();
+    </script>
     <script>
       (function () {
         const events = ["click", "keydown", "pointerup", "touchend"];
@@ -137,6 +183,7 @@
         events.forEach((e) => document.addEventListener(e, resume));
       })();
     </script>
+    <div id="rotate">Rotate your phone for the full court</div>
     <div id="errbar"></div>
     <script>
       (function () {

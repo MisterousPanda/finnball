@@ -9,6 +9,7 @@ mod crowd;
 mod fx;
 mod gameplay;
 mod input;
+mod quality;
 mod roster;
 mod sim;
 mod states;
@@ -48,6 +49,7 @@ fn main() {
                 }),
         )
         .insert_resource(ClearColor(Color::srgb(0.02, 0.03, 0.06)))
+        .insert_resource(quality::Quality::detect())
         .insert_resource(states::MatchConfig::default())
         .insert_resource(states::Paused(false))
         .init_state::<states::AppState>()

@@ -11,6 +11,16 @@ cargo build --profile wasm-release --target wasm32-unknown-unknown
 mkdir -p www/pkg
 wasm-bindgen --target web --out-dir www/pkg --no-typescript \
   target/wasm32-unknown-unknown/wasm-release/finnball.wasm
+# Smaller wasm = less for Safari to JIT and hold in memory on phones.
+if command -v wasm-opt >/dev/null 2>&1; then
+  echo "wasm-opt -Os ..."
+  wasm-opt -Os --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext \
+    --enable-mutable-globals --enable-reference-types --enable-simd \
+    -o www/pkg/finnball_bg.opt.wasm www/pkg/finnball_bg.wasm
+  mv -f www/pkg/finnball_bg.opt.wasm www/pkg/finnball_bg.wasm
+else
+  echo "wasm-opt not found (apt install binaryen) — shipping unoptimised wasm"
+fi
 mkdir -p www/assets www/game
 rm -rf www/assets/audio www/assets/shaders www/assets/env
 cp -r assets/audio www/assets/audio

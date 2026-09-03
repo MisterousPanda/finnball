@@ -17,7 +17,20 @@ impl Plugin for UiPlugin {
             select::SelectPlugin,
             hud::HudPlugin,
         ))
-        .add_systems(Update, button_visuals);
+        .add_systems(Update, (button_visuals, fit_ui_scale));
+    }
+}
+
+/// The HUD and menus are laid out for a ~1600x900 window. Phones are 400-850
+/// logical px on a side, so shrink the whole UI to keep panels from covering
+/// the court; desktops stay at 1.0.
+fn fit_ui_scale(windows: Query<&Window>, mut scale: ResMut<UiScale>) {
+    let Ok(win) = windows.single() else {
+        return;
+    };
+    let target = (win.width() / 1400.0).min(win.height() / 800.0).clamp(0.42, 1.0);
+    if (scale.0 - target).abs() > 0.01 {
+        scale.0 = target;
     }
 }
 
