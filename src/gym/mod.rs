@@ -20,7 +20,9 @@ use bevy::prelude::*;
 use bevy::state::app::StatesPlugin;
 use bevy::time::TimeUpdateStrategy;
 
-use crate::ai::AiPlugin;
+pub mod tune;
+
+use crate::ai::{AiPlugin, AiProfile, AiProfiles};
 use crate::ball::{Ball, BallPlugin, BallState, BallVel, Hold};
 use crate::gameplay::{GameRng, GameplayPlugin, LiveControl, MatchClock, PlayerIntent, Scoreboard};
 use crate::roster::Side;
@@ -238,13 +240,57 @@ struct Ledger {
     shot_released: bool,
 }
 
+/// Box-score totals for one bench.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TeamStats {
+    pub pts: u32,
+    pub fga: u32,
+    pub fgm: u32,
+    pub stl: u32,
+    pub blk: u32,
+    pub reb: u32,
+    pub ast: u32,
+}
+
+impl TeamStats {
+    pub fn fg_pct(&self) -> f32 {
+        if self.fga == 0 {
+            0.0
+        } else {
+            self.fgm as f32 / self.fga as f32
+        }
+    }
+}
+
+/// Outcome of [`Gym::play_out`].
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MatchResult {
+    pub home: TeamStats,
+    pub away: TeamStats,
+    pub steps: u64,
+    pub finished: bool,
+}
+
+impl MatchResult {
+    pub fn stats(&self, side: Side) -> &TeamStats {
+        match side {
+            Side::Home => &self.home,
+            Side::Away => &self.away,
+        }
+    }
+}
+
 /// Headless FINNBALL match you can step one fixed tick at a time.
 pub struct Gym {
     app: App,
     steps: u64,
     ctrl_side: Side,
     ctrl_slot: u8,
+    /// Nobody is controlled: all six players run the rule-based AI.
+    all_ai: bool,
     ledger: Ledger,
+    /// Last box-score snapshot per side (home, away) while players existed.
+    teams: [TeamStats; 2],
     pub weights: RewardWeights,
 }
 
@@ -282,7 +328,9 @@ impl Gym {
             steps: 0,
             ctrl_side: Side::Home,
             ctrl_slot: 0,
+            all_ai: false,
             ledger: Ledger::default(),
+            teams: [TeamStats::default(); 2],
             weights: RewardWeights::default(),
         };
         gym.reset(seed);
@@ -291,6 +339,98 @@ impl Gym {
 
     pub fn with_default_config(seed: u64) -> Self {
         Self::new(MatchConfig::default(), seed)
+    }
+
+    /// All-AI match: `home` and `away` play with the given profiles, nobody is
+    /// controlled. The profiles are pinned (`AiProfiles::locked`) so
+    /// `MatchConfig::difficulty` is ignored across resets.
+    pub fn ai_vs_ai(home: AiProfile, away: AiProfile, seed: u64) -> Self {
+        let mut gym = Self::new(MatchConfig::default(), seed);
+        gym.set_profiles(home, away);
+        gym.release_control();
+        gym.reset(seed);
+        gym
+    }
+
+    pub fn set_profiles(&mut self, home: AiProfile, away: AiProfile) {
+        self.app.world_mut().insert_resource(AiProfiles {
+            home,
+            away,
+            locked: true,
+        });
+    }
+
+    pub fn profiles(&self) -> AiProfiles {
+        *self.app.world().resource::<AiProfiles>()
+    }
+
+    /// Nobody controlled; `step()` actions are ignored from here on (until `select`).
+    pub fn release_control(&mut self) {
+        self.all_ai = true;
+        self.app.world_mut().resource_mut::<LiveControl>().entity = None;
+    }
+
+    /// Box-score totals for `side` (points from the scoreboard, the rest from
+    /// `BoxLine`). Players are despawned on `GameOver`, so this reads the copy
+    /// refreshed on every step while they still exist.
+    pub fn team_stats(&mut self, side: Side) -> TeamStats {
+        self.refresh_teams();
+        let score = self.app.world().resource::<Scoreboard>();
+        let mut t = self.teams[(side == Side::Away) as usize];
+        t.pts = if side == Side::Home {
+            score.home
+        } else {
+            score.away
+        };
+        t
+    }
+
+    fn refresh_teams(&mut self) {
+        let world = self.app.world_mut();
+        let mut teams = [TeamStats::default(); 2];
+        let mut any = false;
+        for (p, bx) in world.query::<(&Player, &BoxLine)>().iter(world) {
+            any = true;
+            let t = &mut teams[(p.side == Side::Away) as usize];
+            t.fga += bx.fg_att;
+            t.fgm += bx.fg_made;
+            t.stl += bx.stl;
+            t.blk += bx.blk;
+            t.reb += bx.reb;
+            t.ast += bx.ast;
+        }
+        if any {
+            self.teams = teams;
+        }
+    }
+
+    /// Runs the current match to `GameOver` (or `max_steps`), feeding `policy`
+    /// the observation each tick for the controlled player (ignored in all-AI mode).
+    pub fn play_out(
+        &mut self,
+        mut policy: impl FnMut(&[f32], u64) -> Action,
+        max_steps: u64,
+    ) -> MatchResult {
+        let mut obs = self.observe();
+        let mut finished = self.done();
+        let mut n = 0u64;
+        while !finished && n < max_steps {
+            let action = if self.all_ai {
+                Action::noop()
+            } else {
+                policy(&obs, self.steps)
+            };
+            let r = self.step(action);
+            obs = r.obs;
+            finished = r.done;
+            n += 1;
+        }
+        MatchResult {
+            home: self.team_stats(Side::Home),
+            away: self.team_stats(Side::Away),
+            steps: n,
+            finished,
+        }
     }
 
     /// Ends the running match (despawning everything tagged
@@ -306,6 +446,7 @@ impl Gym {
             self.app.update();
         }
         self.app.world_mut().insert_resource(GameRng(seed));
+        self.teams = [TeamStats::default(); 2];
         self.app
             .world_mut()
             .resource_mut::<NextState<AppState>>()
@@ -313,7 +454,11 @@ impl Gym {
         Action::noop().write(&mut self.app.world_mut().resource_mut::<PlayerIntent>());
         self.app.update();
         self.steps = 0;
-        self.select(self.ctrl_side, self.ctrl_slot);
+        if self.all_ai {
+            self.release_control();
+        } else {
+            self.select(self.ctrl_side, self.ctrl_slot);
+        }
         self.ledger = self.read_ledger();
         self.observe()
     }
@@ -321,6 +466,7 @@ impl Gym {
     /// Hands the controlled slot to another player (e.g. `Side::Away, 1` to train
     /// a defender). Everyone else stays on the rule-based AI.
     pub fn select(&mut self, side: Side, slot: u8) {
+        self.all_ai = false;
         self.ctrl_side = side;
         self.ctrl_slot = slot;
         let world = self.app.world_mut();
@@ -337,6 +483,7 @@ impl Gym {
         action.write(&mut self.app.world_mut().resource_mut::<PlayerIntent>());
         self.app.update();
         self.steps += 1;
+        self.refresh_teams();
         let now = self.read_ledger();
         let reward = self.reward(self.ledger, now);
         self.ledger = now;
@@ -578,38 +725,44 @@ fn single_threaded(app: &mut App) {
     }
 }
 
+/// Tiny hand-written policy for the controlled (home 0) player — the "human
+/// proxy": with the ball, drive at the +X hoop and shoot inside ~3 m (hold the
+/// meter ~12 ticks, then release); without it, act randomly. Enough to make
+/// buckets happen so the reward path gets exercised, and a rough stand-in for
+/// a beginner when tuning the opposition.
+pub fn scripted_driver(obs: &[f32], step: u64, rng: &mut GymRng) -> Action {
+    let has_ball = obs[10] == 1.0;
+    if !has_ball {
+        return Action::random(rng);
+    }
+    let ctrl = BALL_FEATURES;
+    let x = obs[ctrl] * COURT_HALF_LEN;
+    let z = obs[ctrl + 1] * COURT_HALF_WID;
+    let to_hoop = Vec2::new(HOOP_X - x, -z);
+    if to_hoop.length() > 3.0 {
+        return Action {
+            move_xz: to_hoop.normalize(),
+            sprint: true,
+            button: Button::None,
+        };
+    }
+    let phase = step % 16;
+    if phase < 12 {
+        Action::multi(0, false, Button::ShootHold)
+    } else if phase == 12 {
+        Action::multi(0, false, Button::ShootRelease)
+    } else {
+        Action::noop()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ai::PRO;
 
-    /// Tiny hand-written policy for the controlled (home 0) player: with the ball,
-    /// drive at the +X hoop and shoot inside ~3 m (hold the meter ~12 ticks, then
-    /// release); without it, act randomly. Enough to make buckets happen so the
-    /// reward path gets exercised.
     fn scripted(obs: &[f32], step: u64, rng: &mut GymRng) -> Action {
-        let has_ball = obs[10] == 1.0;
-        if !has_ball {
-            return Action::random(rng);
-        }
-        let ctrl = BALL_FEATURES;
-        let x = obs[ctrl] * COURT_HALF_LEN;
-        let z = obs[ctrl + 1] * COURT_HALF_WID;
-        let to_hoop = Vec2::new(HOOP_X - x, -z);
-        if to_hoop.length() > 3.0 {
-            return Action {
-                move_xz: to_hoop.normalize(),
-                sprint: true,
-                button: Button::None,
-            };
-        }
-        let phase = step % 16;
-        if phase < 12 {
-            Action::multi(0, false, Button::ShootHold)
-        } else if phase == 12 {
-            Action::multi(0, false, Button::ShootRelease)
-        } else {
-            Action::noop()
-        }
+        scripted_driver(obs, step, rng)
     }
 
     #[test]
@@ -758,6 +911,150 @@ mod tests {
         }
     }
 
+    /// Counts how often each AI behaviour fires over one PRO-vs-PRO match and
+    /// prints the ticker lines it produced. Diagnostic; run with
+    /// `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn behavior_census() {
+        use crate::ai::{AiBrain, DefRole, Plan};
+        use std::collections::BTreeMap;
+        let mut gym = Gym::ai_vs_ai(PRO, PRO, 5);
+        let mut contest_ticks = 0u32;
+        let mut block_ticks = 0u32;
+        let mut help_ticks = 0u32;
+        let mut cut_ticks = 0u32;
+        let mut screen_ticks = 0u32;
+        let mut drive_ticks = 0u32;
+        let mut juke_ticks = 0u32;
+        let mut windup_ticks = 0u32;
+        let mut pass_ticks = 0u32;
+        let mut lines: BTreeMap<String, u32> = BTreeMap::new();
+        let mut last_line = String::new();
+        let mut steps = 0u64;
+        while !gym.done() && steps < MATCH_CAP_TICKS {
+            gym.step(Action::noop());
+            steps += 1;
+            let world = gym.world_mut();
+            for (pose, brain) in world.query::<(&Pose, &AiBrain)>().iter(world) {
+                contest_ticks += (*pose == Pose::Contest) as u32;
+                block_ticks += (*pose == Pose::Block) as u32;
+                help_ticks += (brain.role == DefRole::Help) as u32;
+                cut_ticks += (brain.cut_t > 0.0) as u32;
+                screen_ticks += (brain.screen_t > 0.0 || brain.roll_t > 0.0) as u32;
+                drive_ticks += matches!(brain.plan, Plan::Drive(_)) as u32;
+                juke_ticks += matches!(brain.plan, Plan::Juke(_)) as u32;
+                windup_ticks += (brain.plan == Plan::Shoot) as u32;
+            }
+            if let Some(s) = world
+                .query_filtered::<&BallState, With<Ball>>()
+                .iter(world)
+                .next()
+            {
+                pass_ticks += (s.hold == Hold::Pass) as u32;
+            }
+            let line = world.resource::<crate::gameplay::Ticker>().line.clone();
+            if line != last_line {
+                *lines.entry(line.clone()).or_default() += 1;
+                last_line = line;
+            }
+        }
+        let (h, a) = gym.score();
+        eprintln!(
+            "census {steps} ticks, {h}-{a}: contest {contest_ticks} block {block_ticks} help {help_ticks} cut {cut_ticks} screen {screen_ticks} drive {drive_ticks} juke {juke_ticks} windup {windup_ticks} pass {pass_ticks}"
+        );
+        for (l, n) in &lines {
+            eprintln!("  {n:>3}x {l}");
+        }
+    }
+
+    const MATCH_CAP_TICKS: u64 = 40_000;
+
+    /// A stuffed AI dunk (aimed at the front iron) must not drop anyway.
+    #[test]
+    fn clanked_dunks_do_not_score() {
+        use crate::sim::{ballistic_velocity, GRAVITY, RIM_HEIGHT};
+        let mut drops = 0;
+        let mut tries = 0;
+        for i in 0..12 {
+            let ang = i as f32 * 0.5 - 2.75;
+            for dist in [1.0f32, 1.8, 2.6] {
+                tries += 1;
+                let mut gym = Gym::ai_vs_ai(PRO, PRO, 3);
+                let before = gym.score();
+                {
+                    let world = gym.world_mut();
+                    let mut q = world.query::<(&mut Transform, &Player)>();
+                    for (mut t, p) in q.iter_mut(world) {
+                        t.translation = Vec3::new(if p.side == Side::Home { -12.0 } else { 12.0 }, 0.0, 6.5);
+                    }
+                    let mut bq = world.query_filtered::<(&mut Transform, &mut BallVel, &mut BallState), With<Ball>>();
+                    let (mut bt, mut bv, mut bs) = bq.single_mut(world).unwrap();
+                    let hoop = Vec3::new(HOOP_X, 0.0, 0.0);
+                    let me = hoop + Vec3::new(-ang.cos() * dist, 0.0, ang.sin() * dist);
+                    let from = Vec3::new(me.x, 1.8, me.z);
+                    let target = Vec3::new(HOOP_X, RIM_HEIGHT, 0.0)
+                        + (me - hoop).normalize() * 0.32
+                        + Vec3::Y * 0.05;
+                    let v = ballistic_velocity(from.to_array(), target.to_array(), 0.55, GRAVITY);
+                    bt.translation = from;
+                    bv.0 = Vec3::from_array(v);
+                    bs.hold = Hold::Shot;
+                    bs.holder = None;
+                    bs.shooter = None;
+                    bs.rim_hits = 0;
+                }
+                for _ in 0..200 {
+                    gym.step(Action::noop());
+                }
+                if gym.score() != before {
+                    drops += 1;
+                }
+            }
+        }
+        eprintln!("clanked dunks: {drops}/{tries} dropped");
+        assert!(drops * 5 <= tries, "too many stuffed dunks still scored: {drops}/{tries}");
+    }
+
+    /// A perfectly aimed jumper from every distance must drop through the real
+    /// rim/backboard physics (not just the pure `cylinder_score` math).
+    #[test]
+    fn green_jumpers_drop_in_the_live_sim() {
+        use crate::sim::{ballistic_velocity, flight_time_for_distance, GRAVITY, RIM_HEIGHT};
+        let mut misses = Vec::new();
+        for dist_i in 2..=12 {
+            let dist = dist_i as f32;
+            let mut gym = Gym::ai_vs_ai(PRO, PRO, 3);
+            let before = gym.score();
+            {
+                let world = gym.world_mut();
+                // Freeze everyone so nobody touches the ball mid-flight.
+                let mut q = world.query::<(&mut Transform, &Player)>();
+                for (mut t, p) in q.iter_mut(world) {
+                    t.translation = Vec3::new(if p.side == Side::Home { -12.0 } else { 12.0 }, 0.0, 6.5);
+                }
+                let mut bq = world.query_filtered::<(&mut Transform, &mut BallVel, &mut BallState), With<Ball>>();
+                let (mut bt, mut bv, mut bs) = bq.single_mut(world).unwrap();
+                let from = Vec3::new(HOOP_X - dist, 1.95, 0.0);
+                let hoop = [HOOP_X, RIM_HEIGHT, 0.0];
+                let v = ballistic_velocity(from.to_array(), hoop, flight_time_for_distance(dist), GRAVITY);
+                bt.translation = from;
+                bv.0 = Vec3::from_array(v);
+                bs.hold = Hold::Shot;
+                bs.holder = None;
+                bs.shooter = None;
+                bs.rim_hits = 0;
+            }
+            for _ in 0..200 {
+                gym.step(Action::noop());
+            }
+            if gym.score() == before {
+                misses.push(dist);
+            }
+        }
+        assert!(misses.is_empty(), "green jumpers missed from {misses:?} m");
+    }
+
     /// Regression guard for two sim bugs found while building the gym: the LCG
     /// returned only [0, 0.004] (every roll "succeeded") and `ai_decisions`
     /// launched shots from the dribble position instead of the solved release
@@ -766,7 +1063,7 @@ mod tests {
     #[test]
     fn ai_vs_ai_match_produces_a_real_score() {
         let mut gym = Gym::with_default_config(1);
-        gym.select(Side::Away, 2);
+        gym.release_control();
         let mut shots = 0u32;
         let mut was_shot = false;
         for _ in 0..15_360 {
@@ -826,7 +1123,12 @@ mod tests {
             "regulation never completed: q{q} after {steps} steps"
         );
         assert!(h > 0, "the drive-and-shoot script never scored: {h}-{a}");
-        assert!(reward_sum > 0.0, "points must show up in the reward");
+        // Points for and against both flow into the reward; the sign depends on
+        // who won (the script loses to PRO defense, which is the point).
+        assert!(
+            (reward_sum - (h as f32 - a as f32)).abs() < 40.0 && reward_sum != 0.0,
+            "points must show up in the reward: {reward_sum} for {h}-{a}"
+        );
         assert!(
             done,
             "match never reached GameOver ({steps} steps, {h}-{a})"

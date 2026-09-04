@@ -70,12 +70,20 @@ pub fn points_for(kind: ShotKind) -> u32 {
     }
 }
 
+/// Fixed sim step the ball is integrated with (`Time<Fixed>` default, 64 Hz).
+pub const SIM_DT: f32 = 1.0 / 64.0;
+
 /// Ballistic launch velocity to reach a target in `flight` seconds under gravity.
+///
+/// `integrate_ball` is semi-implicit Euler (`v -= g·dt; p += v·dt`), whose
+/// closed form lands `½·g·dt·t` below the analytic parabola — 15 cm on a
+/// three, enough to clip the front rim a tick early. Adding `½·g·dt` to the
+/// vertical component makes the discrete trajectory hit `to` exactly at `t`.
 pub fn ballistic_velocity(from: [f32; 3], to: [f32; 3], flight: f32, gravity: f32) -> [f32; 3] {
     let t = flight.max(0.18);
     [
         (to[0] - from[0]) / t,
-        (to[1] - from[1] + 0.5 * gravity * t * t) / t,
+        (to[1] - from[1] + 0.5 * gravity * t * t) / t + 0.5 * gravity * SIM_DT,
         (to[2] - from[2]) / t,
     ]
 }
@@ -124,8 +132,16 @@ pub fn ai_wants_shot(
     (open && rating > 62.0) || shot_clock < 5.0 || close_range
 }
 
+/// Reach-in odds. Full reach inside `STEAL_REACH_FULL`, nothing beyond
+/// `STEAL_REACH_MAX`. Bodies are kept `PLAYER_RADIUS * 2.05 ≈ 0.78 m` apart by
+/// `separate_players`, so the window has to extend past that or nobody can
+/// ever get a hand on the ball.
+pub const STEAL_REACH_FULL: f32 = 0.55;
+pub const STEAL_REACH_MAX: f32 = 1.25;
+
 pub fn steal_chance(steal_rating: f32, handle_rating: f32, distance: f32) -> f32 {
-    let reach = (1.15 - distance * 1.8).clamp(0.0, 1.0);
+    let reach = (1.0 - (distance - STEAL_REACH_FULL) / (STEAL_REACH_MAX - STEAL_REACH_FULL))
+        .clamp(0.0, 1.0);
     let mismatch = ((steal_rating - handle_rating) / 100.0 + 0.5).clamp(0.15, 0.9);
     (0.12 + 0.45 * mismatch) * reach
 }
@@ -136,6 +152,29 @@ pub fn contest_factor(def_dist: f32, block_rating: f32) -> f32 {
     }
     let close = (1.0 - def_dist / 2.4).clamp(0.0, 1.0);
     close * (0.45 + block_rating / 180.0)
+}
+
+/// `contest_factor` with the hands-up bonus: a defender in `Pose::Block` /
+/// `Pose::Contest` takes a lot more out of the shot than one standing flat.
+pub fn contest_with_hands(def_dist: f32, block_rating: f32, hands_up: bool) -> f32 {
+    let base = contest_factor(def_dist, block_rating);
+    if hands_up {
+        (base * 1.45 + 0.08 * (def_dist < 2.4) as u8 as f32).min(1.0)
+    } else {
+        base
+    }
+}
+
+/// Fraction of normal pickup reach at which a defender can pick off a pass in
+/// flight. Ball hawks (`steal` 99) get ~0.73, bigs (`steal` 30) ~0.5.
+pub fn intercept_reach(steal_rating: f32) -> f32 {
+    (0.40 + steal_rating / 300.0).clamp(0.4, 0.8)
+}
+
+/// Expected points of a shot: make chance × points. The AI's currency for
+/// "shoot, drive or pass?".
+pub fn shot_ev(make_chance: f32, is_three: bool) -> f32 {
+    make_chance * if is_three { 3.0 } else { 2.0 }
 }
 
 pub fn flight_time_for_distance(distance: f32) -> f32 {

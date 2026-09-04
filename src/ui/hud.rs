@@ -57,7 +57,16 @@ enum OverNav {
     Rematch,
 }
 
-fn setup_hud(mut commands: Commands) {
+fn setup_hud(mut commands: Commands, config: Res<MatchConfig>) {
+    // Which CPU the player is up against; fixed for the whole match.
+    let (cpu_label, cpu_color) = if config.mode == GameMode::Practice {
+        ("SOLO".to_string(), MUTED)
+    } else {
+        (
+            format!("CPU {}", config.difficulty.label()),
+            crate::ui::menu::difficulty_color(config.difficulty),
+        )
+    };
     commands.spawn((
         DespawnOnExit(AppState::Playing),
         CrowdFlash,
@@ -127,6 +136,15 @@ fn setup_hud(mut commands: Commands) {
                     (ScoreText, Text::new("FOX  0  —  0  CRN"), title_font(28.0), TextColor(TEXT)),
                     (ClockText, Text::new("Q1  1:00"), title_font(20.0), TextColor(GOLD)),
                     (ShotText, Text::new("24"), title_font(22.0), TextColor(MAGENTA)),
+                    (
+                        Node {
+                            padding: UiRect::axes(px(8), px(2)),
+                            border: UiRect::all(px(1)),
+                            ..default()
+                        },
+                        BorderColor::all(cpu_color.with_alpha(0.7)),
+                        children![(Text::new(cpu_label), title_font(14.0), TextColor(cpu_color))],
+                    ),
                 ],
             ),
             (

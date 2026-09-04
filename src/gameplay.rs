@@ -4,9 +4,10 @@ use crate::ball::{spawn_ball, Ball, BallSpin, BallState, BallVel, BucketEvent, H
 use crate::camera::GameCam;
 use crate::roster::Side;
 use crate::sim::{
-    ballistic_velocity, clamp_to_court, classify_shot, contest_factor, dribble_cadence,
-    flight_time_for_distance, in_paint, meter_accuracy, release_height, release_spin, shot_kind,
-    shot_make_chance, steal_chance, PassKind, ShotType, GRAVITY, HOOP_X, PAINT_DEPTH, RIM_HEIGHT,
+    ballistic_velocity, clamp_to_court, classify_shot, contest_with_hands, dribble_cadence,
+    flight_time_for_distance, in_paint, intercept_reach, meter_accuracy, release_height,
+    release_spin, shot_kind, shot_make_chance, steal_chance, PassKind, ShotType, GRAVITY, HOOP_X,
+    PAINT_DEPTH, RIM_HEIGHT,
 };
 use crate::states::{AppState, GameMode, MatchConfig, Paused};
 use crate::units::{
@@ -24,6 +25,7 @@ impl Plugin for GameplayPlugin {
             .init_resource::<GameRng>()
             .init_resource::<LiveControl>()
             .init_resource::<LastPass>()
+            .init_resource::<AiRequests>()
             .add_message::<BucketEvent>()
             .add_message::<PlayCall>()
             .add_message::<DribbleTickEvent>()
@@ -55,9 +57,24 @@ impl Plugin for GameplayPlugin {
                     block_attempts,
                 )
                     .chain()
+                    .in_set(GameplaySet)
                     .run_if(in_state(AppState::Playing)),
             );
     }
+}
+
+/// The rules systems in `FixedUpdate`. The AI schedules itself `.before` this so
+/// its steal / block requests are consumed the same tick, in a stable order.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct GameplaySet;
+
+/// Steal / block attempts queued by AI defenders. They go through exactly the
+/// same `steal_attempts` / `block_attempts` code (same odds, same poses, same
+/// box score) as the human's Q / R buttons.
+#[derive(Resource, Default)]
+pub struct AiRequests {
+    pub steals: Vec<Entity>,
+    pub blocks: Vec<Entity>,
 }
 
 #[derive(Resource)]
@@ -175,10 +192,7 @@ pub struct LastPass {
     pub age: f32,
 }
 
-#[derive(Component)]
-pub struct AiBrain {
-    pub think: f32,
-}
+pub use crate::ai::AiBrain;
 
 fn start_match(
     mut commands: Commands,
@@ -235,9 +249,7 @@ fn start_match(
             human,
             home_spots[i],
         );
-        commands.entity(e).insert(AiBrain {
-            think: i as f32 * 0.2,
-        });
+        commands.entity(e).insert(AiBrain::with_think(i as f32 * 0.2));
         if human {
             first_human = Some(e);
         }
@@ -254,9 +266,7 @@ fn start_match(
                 false,
                 away_spots[i],
             );
-            commands.entity(e).insert(AiBrain {
-                think: 0.4 + i as f32 * 0.15,
-            });
+            commands.entity(e).insert(AiBrain::with_think(0.4 + i as f32 * 0.15));
         }
     }
     control.entity = first_human;
@@ -537,6 +547,7 @@ fn pickup_loose_ball(
     mut last_pass: ResMut<LastPass>,
     mut clock: ResMut<MatchClock>,
     config: Res<MatchConfig>,
+    mut steals: MessageWriter<StealEvent>,
     mut ball: Query<(&Transform, &mut BallState, &BallVel), (With<Ball>, Without<Player>)>,
     mut players: Query<
         (
@@ -559,16 +570,36 @@ fn pickup_loose_ball(
     if !matches!(state.hold, Hold::Loose | Hold::Shot | Hold::Pass) {
         return;
     }
-    if state.hold != Hold::Loose && (bvel.0.length() > 4.8 || btf.translation.y > 1.55) {
+    // A pass in flight is catchable at hand height by anyone in reach — the
+    // receiver, or a defender who has jumped the lane. Everything else (shots,
+    // dead balls) must slow down and drop before it can be picked up.
+    let catchable_pass = state.hold == Hold::Pass
+        && btf.translation.y < 2.3
+        && btf.translation.y > 0.25
+        && last_pass.age > 0.1;
+    if !catchable_pass
+        && state.hold != Hold::Loose
+        && (bvel.0.length() > 4.8 || btf.translation.y > 1.55)
+    {
         return;
     }
     if state.hold == Hold::Loose && bvel.0.length() > 9.5 && btf.translation.y > 1.4 {
         return;
     }
+    let passer_side = state
+        .last_passer
+        .and_then(|p| players.get(p).ok().map(|(_, _, _, pl, _, _)| pl.side));
     let mut best: Option<(Entity, f32)> = None;
-    for (e, tf, r, _p, _, _) in &players {
+    for (e, tf, r, p, _, _) in &players {
+        if catchable_pass && Some(e) == state.last_passer {
+            continue;
+        }
         let d = tf.translation.distance(btf.translation);
-        let reach = 1.05 + r.height * 0.12 + r.rebound / 220.0;
+        let mut reach = 1.05 + r.height * 0.12 + r.rebound / 220.0;
+        if catchable_pass && passer_side.is_some_and(|s| s != p.side) {
+            // Interception: needs a hand on the ball, not just a body in the lane.
+            reach *= intercept_reach(r.steal);
+        }
         if d < reach {
             let score = r.rebound + (2.0 - d) * 20.0;
             if best.map(|(_, s)| score > s).unwrap_or(true) {
@@ -577,6 +608,28 @@ fn pickup_loose_ball(
         }
     }
     if let Some((e, _)) = best {
+        let intercepted = catchable_pass
+            && passer_side.is_some_and(|s| players.get(e).map(|x| x.3.side != s).unwrap_or(false));
+        if intercepted {
+            state.hold = Hold::Held;
+            state.holder = Some(e);
+            state.last_touch = Some(e);
+            state.shooter = None;
+            state.rim_hits = 0;
+            clock.shot = config.shot_clock;
+            last_pass.passer = None;
+            last_pass.age = 99.0;
+            if let Ok((_, tf, _, _, mut boxl, _)) = players.get_mut(e) {
+                boxl.stl += 1;
+                steals.write(StealEvent {
+                    success: true,
+                    pos: tf.translation,
+                });
+            }
+            ticker.line = "PICKED OFF — LANE WAS CLOSED".into();
+            ticker.age = 0.0;
+            return;
+        }
         let rebound = state.shooter.is_some() || state.rim_hits > 0;
         if let Some(shooter) = state.shooter {
             if shooter != e {
@@ -652,44 +705,41 @@ fn shoot_and_pass(
     };
 
     // Snapshot needed data to avoid double borrows
-    let roster: Vec<(
-        Entity,
-        Side,
-        Vec3,
-        Vec3,
-        f32,
-        f32,
-        f32,
-        f32,
-        f32,
-        f32,
-        bool,
-        u8,
-    )> = players
+    let roster: Vec<RosterRow> = players
         .iter()
-        .map(|(e, p, r, t, v, _, _, _, s, heat)| {
-            (
-                e,
-                p.side,
-                t.translation,
-                v.0,
-                r.three,
-                r.mid,
-                r.dunk,
-                r.pass,
-                r.block,
-                s.0,
-                p.human,
-                heat.streak,
-            )
+        .map(|(e, p, r, t, v, pose, _, _, s, heat)| RosterRow {
+            e,
+            side: p.side,
+            pos: t.translation,
+            vel: v.0,
+            three: r.three,
+            mid: r.mid,
+            dunk: r.dunk,
+            pass: r.pass,
+            block: r.block,
+            stam: s.0,
+            streak: heat.streak,
+            hands_up: matches!(*pose, Pose::Block | Pose::Contest),
         })
         .collect();
 
-    let Some(me) = roster.iter().find(|x| x.0 == ctrl).cloned() else {
+    let Some(me) = roster.iter().find(|x| x.e == ctrl).cloned() else {
         intent.shoot_released = false;
         return;
     };
-    let (me_e, me_side, me_pos, me_vel, three, mid, dunk, pass, _blk, stam, _, streak) = me;
+    let RosterRow {
+        e: me_e,
+        side: me_side,
+        pos: me_pos,
+        vel: me_vel,
+        three,
+        mid,
+        dunk,
+        pass,
+        stam,
+        streak,
+        ..
+    } = me;
 
     if intent.special && state.hold == Hold::Held && state.holder == Some(ctrl) {
         intent.shoot_released = true;
@@ -699,9 +749,9 @@ fn shoot_and_pass(
         if let Some(target) = nearest_teammate(&roster, me_e, me_side, me_pos) {
             let kind = intent.pass_kind;
             let dest = match kind {
-                PassKind::Lob => target.2 + Vec3::Y * 2.6,
-                PassKind::Bounce => target.2 + Vec3::Y * 0.35,
-                _ => target.2 + Vec3::Y * 1.4,
+                PassKind::Lob => target.pos + Vec3::Y * 2.6,
+                PassKind::Bounce => target.pos + Vec3::Y * 0.35,
+                _ => target.pos + Vec3::Y * 1.4,
             };
             let (flight, grav) = match kind {
                 PassKind::Lob => (
@@ -721,6 +771,8 @@ fn shoot_and_pass(
                     GRAVITY * 0.28,
                 ),
             };
+            // Lead a moving receiver so the catch lands in his hands, not behind him.
+            let dest = dest + Vec3::new(target.vel.x, 0.0, target.vel.z) * flight * 0.85;
             let v = ballistic_velocity(
                 [btf.translation.x, 1.4, btf.translation.z],
                 [dest.x, dest.y, dest.z],
@@ -881,78 +933,54 @@ fn shoot_and_pass(
     intent.special = false;
 }
 
-fn nearest_teammate(
-    roster: &[(
-        Entity,
-        Side,
-        Vec3,
-        Vec3,
-        f32,
-        f32,
-        f32,
-        f32,
-        f32,
-        f32,
-        bool,
-        u8,
-    )],
-    me: Entity,
+/// Per-player snapshot taken at the top of `shoot_and_pass` so the shot / pass
+/// math never needs a second borrow of the player query.
+#[derive(Clone, Copy)]
+struct RosterRow {
+    e: Entity,
     side: Side,
     pos: Vec3,
-) -> Option<(
-    Entity,
-    Side,
-    Vec3,
-    Vec3,
-    f32,
-    f32,
-    f32,
-    f32,
-    f32,
-    f32,
-    bool,
-    u8,
-)> {
-    roster
-        .iter()
-        .filter(|r| r.0 != me && r.1 == side)
-        .min_by(|a, b| {
-            a.2.distance(pos)
-                .partial_cmp(&b.2.distance(pos))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-        .cloned()
+    vel: Vec3,
+    three: f32,
+    mid: f32,
+    dunk: f32,
+    pass: f32,
+    block: f32,
+    stam: f32,
+    streak: u8,
+    hands_up: bool,
 }
 
-fn nearest_contest(
-    roster: &[(
-        Entity,
-        Side,
-        Vec3,
-        Vec3,
-        f32,
-        f32,
-        f32,
-        f32,
-        f32,
-        f32,
-        bool,
-        u8,
-    )],
-    me: Entity,
-    side: Side,
-    pos: Vec3,
-) -> f32 {
+fn nearest_teammate(roster: &[RosterRow], me: Entity, side: Side, pos: Vec3) -> Option<RosterRow> {
     roster
         .iter()
-        .filter(|r| r.0 != me && r.1 != side)
-        .map(|r| contest_factor(r.2.distance(pos), r.8))
+        .filter(|r| r.e != me && r.side == side)
+        .min_by(|a, b| {
+            a.pos
+                .distance(pos)
+                .partial_cmp(&b.pos.distance(pos))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .copied()
+}
+
+/// Strongest contest on a shooter at `pos`: defender distance, block rating and
+/// whether the defender has his hands up (`Pose::Block` / `Pose::Contest`).
+fn nearest_contest(roster: &[RosterRow], me: Entity, side: Side, pos: Vec3) -> f32 {
+    roster
+        .iter()
+        .filter(|r| r.e != me && r.side != side)
+        .map(|r| contest_with_hands(r.pos.distance(pos), r.block, r.hands_up))
         .fold(0.0, f32::max)
 }
 
+/// Reach-in steals. Actors are the human (Q / B / touch STEAL) plus every AI
+/// defender that queued a request this tick; all of them roll the same
+/// `steal_chance` and pay the same `Stumble` on a miss.
 fn steal_attempts(
     paused: Res<Paused>,
     mut intent: ResMut<PlayerIntent>,
+    mut reqs: ResMut<AiRequests>,
     mut rng: ResMut<GameRng>,
     mut ticker: ResMut<Ticker>,
     mut steals: MessageWriter<StealEvent>,
@@ -970,80 +998,100 @@ fn steal_attempts(
         &mut BoxLine,
     )>,
 ) {
-    if paused.0 || !intent.steal {
-        intent.steal = false;
-        return;
+    let mut actors: Vec<Entity> = Vec::new();
+    if intent.steal && !paused.0 {
+        actors.extend(control.entity);
     }
     intent.steal = false;
-    let Some(ctrl) = control.entity else {
+    if paused.0 {
+        reqs.steals.clear();
         return;
-    };
+    }
+    actors.append(&mut reqs.steals);
+    if actors.is_empty() {
+        return;
+    }
     let Ok(mut state) = ball.single_mut() else {
         return;
     };
-    let Some(holder) = state.holder else {
-        return;
-    };
-    if state.hold != Hold::Held || holder == ctrl {
-        return;
-    }
-    let mut thief_data = None;
-    let mut vic_data = None;
-    for (e, p, r, t, _, _, _) in &players {
-        if e == ctrl {
-            thief_data = Some((p.side, t.translation, r.steal));
+    for thief in actors {
+        let Some(holder) = state.holder else {
+            return;
+        };
+        if state.hold != Hold::Held || holder == thief {
+            continue;
         }
-        if e == holder {
-            vic_data = Some((p.side, t.translation, r.handle));
+        let mut thief_data = None;
+        let mut vic_data = None;
+        for (e, p, r, t, _, _, _) in &players {
+            if e == thief {
+                thief_data = Some((p.side, t.translation, r.steal));
+            }
+            if e == holder {
+                vic_data = Some((p.side, t.translation, r.handle));
+            }
         }
-    }
-    let Some((_, tp, steal)) = thief_data else {
-        return;
-    };
-    let Some((vs, vp, handle)) = vic_data else {
-        return;
-    };
-    let Some((_, thief_side, _, _, _, _, _)) = players.iter().find(|(e, ..)| *e == ctrl) else {
-        return;
-    };
-    let _ = (vs, thief_side);
-    let d = tp.distance(vp);
-    if rng.f32() < steal_chance(steal, handle, d) {
-        state.holder = Some(ctrl);
-        state.last_touch = Some(ctrl);
-        steals.write(StealEvent {
-            success: true,
-            pos: tp,
-        });
-        cams.write(crate::camera::CamTrigger::Steal);
-        last_pass.passer = None;
-        last_pass.age = 99.0;
-        ticker.line = "STRIPPED — GHOST MODE".into();
-        ticker.age = 0.0;
-        if let Ok((_, _, _, _, mut pose, mut clock, mut boxl)) = players.get_mut(ctrl) {
-            *pose = Pose::Idle;
-            clock.0 = 0.0;
-            boxl.stl += 1;
+        let Some((thief_side, tp, steal)) = thief_data else {
+            continue;
+        };
+        let Some((vic_side, vp, handle)) = vic_data else {
+            continue;
+        };
+        if thief_side == vic_side {
+            continue;
         }
-        if let Ok((_, _, _, _, mut pose, mut clock, _)) = players.get_mut(holder) {
+        let human_thief = control.entity == Some(thief);
+        let d = tp.distance(vp);
+        if rng.f32() < steal_chance(steal, handle, d) {
+            state.holder = Some(thief);
+            state.last_touch = Some(thief);
+            steals.write(StealEvent {
+                success: true,
+                pos: tp,
+            });
+            cams.write(crate::camera::CamTrigger::Steal);
+            last_pass.passer = None;
+            last_pass.age = 99.0;
+            ticker.line = if human_thief {
+                "STRIPPED — GHOST MODE".into()
+            } else if thief_side == Side::Away {
+                "STEAL! — CRANES POCKET-PICK".into()
+            } else {
+                "STEAL! — FOXES RIP IT AWAY".into()
+            };
+            ticker.age = 0.0;
+            if let Ok((_, _, _, _, mut pose, mut clock, mut boxl)) = players.get_mut(thief) {
+                *pose = Pose::Idle;
+                clock.0 = 0.0;
+                boxl.stl += 1;
+            }
+            if let Ok((_, _, _, _, mut pose, mut clock, _)) = players.get_mut(holder) {
+                *pose = Pose::Stumble;
+                clock.0 = 0.0;
+            }
+            // Ball changed hands; nobody else gets a swipe this tick.
+            return;
+        } else if let Ok((_, _, _, _, mut pose, mut clock, _)) = players.get_mut(thief) {
             *pose = Pose::Stumble;
             clock.0 = 0.0;
+            steals.write(StealEvent {
+                success: false,
+                pos: tp,
+            });
+            if human_thief {
+                ticker.line = "REACH-IN — NO WHISTLE, NO BALL".into();
+                ticker.age = 0.0;
+            }
         }
-    } else if let Ok((_, _, _, _, mut pose, mut clock, _)) = players.get_mut(ctrl) {
-        *pose = Pose::Stumble;
-        clock.0 = 0.0;
-        steals.write(StealEvent {
-            success: false,
-            pos: tp,
-        });
-        ticker.line = "REACH-IN — NO WHISTLE, NO BALL".into();
-        ticker.age = 0.0;
     }
 }
 
+/// Jump to block. Same actor model as `steal_attempts`: the human's R / RT plus
+/// AI defenders who timed their jump on a shot in flight.
 fn block_attempts(
     paused: Res<Paused>,
     mut intent: ResMut<PlayerIntent>,
+    mut reqs: ResMut<AiRequests>,
     mut rng: ResMut<GameRng>,
     mut ticker: ResMut<Ticker>,
     control: Res<LiveControl>,
@@ -1062,45 +1110,55 @@ fn block_attempts(
     >,
     mut heats: Query<&mut Heat>,
 ) {
-    if paused.0 || !intent.block {
-        intent.block = false;
-        return;
+    let mut actors: Vec<Entity> = Vec::new();
+    if intent.block && !paused.0 {
+        actors.extend(control.entity);
     }
     intent.block = false;
-    let Some(ctrl) = control.entity else {
+    if paused.0 {
+        reqs.blocks.clear();
         return;
-    };
+    }
+    actors.append(&mut reqs.blocks);
+    if actors.is_empty() {
+        return;
+    }
     let Ok((btf, mut bvel, mut state)) = ball.single_mut() else {
         return;
     };
-    if !matches!(state.hold, Hold::Shot) {
-        if let Ok((_, _, _, _, mut pose, mut clock, _)) = players.get_mut(ctrl) {
-            *pose = Pose::Block;
-            clock.0 = 0.0;
+    for actor in actors {
+        let Ok((_, _, ratings, ptf, mut pose, mut clock, mut boxl)) = players.get_mut(actor)
+        else {
+            continue;
+        };
+        *pose = Pose::Block;
+        clock.0 = 0.0;
+        if !matches!(state.hold, Hold::Shot) {
+            continue;
         }
-        return;
-    }
-    let Ok((_, _, ratings, ptf, mut pose, mut clock, mut boxl)) = players.get_mut(ctrl) else {
-        return;
-    };
-    *pose = Pose::Block;
-    clock.0 = 0.0;
-    let d = ptf.translation.distance(btf.translation);
-    let window = btf.translation.y > 1.6 && btf.translation.y < 3.2;
-    let chance = (ratings.block / 100.0) * (1.15 - d * 0.45).clamp(0.0, 1.0);
-    if window && d < 2.2 && rng.f32() < chance {
-        bvel.0 = Vec3::new(-bvel.0.x * 0.35, bvel.0.y.abs() * 0.2, -bvel.0.z * 0.35)
-            + Vec3::new(rng.range(-2.0, 2.0), 1.2, rng.range(-2.0, 2.0));
-        if let Some(shooter) = state.shooter {
-            if let Ok(mut heat) = heats.get_mut(shooter) {
-                heat.streak = 0;
+        // Horizontal distance: the ball is ~2 m up at release, so a 3D distance
+        // would put even a defender standing on the shooter's toes outside reach.
+        let d = (ptf.translation.x - btf.translation.x).hypot(ptf.translation.z - btf.translation.z);
+        let window = btf.translation.y > 1.6 && btf.translation.y < 3.2;
+        let chance = (ratings.block / 100.0) * (0.9 - d * 0.4).clamp(0.0, 1.0);
+        if window && d < 2.2 && rng.f32() < chance {
+            bvel.0 = Vec3::new(-bvel.0.x * 0.35, bvel.0.y.abs() * 0.2, -bvel.0.z * 0.35)
+                + Vec3::new(rng.range(-2.0, 2.0), 1.2, rng.range(-2.0, 2.0));
+            if let Some(shooter) = state.shooter {
+                if let Ok(mut heat) = heats.get_mut(shooter) {
+                    heat.streak = 0;
+                }
             }
+            state.hold = Hold::Loose;
+            state.shooter = None;
+            boxl.blk += 1;
+            ticker.line = if control.entity == Some(actor) {
+                "REJECTED — GET THAT OUTTA HERE".into()
+            } else {
+                "BLOCKED! — NOT IN THIS HOUSE".into()
+            };
+            ticker.age = 0.0;
         }
-        state.hold = Hold::Loose;
-        state.shooter = None;
-        boxl.blk += 1;
-        ticker.line = "REJECTED — GET THAT OUTTA HERE".into();
-        ticker.age = 0.0;
     }
 }
 
@@ -1295,6 +1353,7 @@ fn pose_timeouts(_time: Res<Time>, paused: Res<Paused>, mut q: Query<(&mut Pose,
             Pose::Dunk => 0.9,
             Pose::Pass => 0.35,
             Pose::Block => 0.45,
+            Pose::Contest => 0.3,
             Pose::Celebrate => 1.4,
             Pose::Stumble => 0.5,
             _ => continue,

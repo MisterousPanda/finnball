@@ -8,6 +8,7 @@ mod courtpaint;
 mod crowd;
 mod fx;
 mod gameplay;
+#[cfg(any(test, feature = "gym"))]
 mod gym;
 mod input;
 mod quality;

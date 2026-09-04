@@ -39,6 +39,42 @@ pub enum CameraMode {
     Cinema,
 }
 
+/// Opposition AI difficulty. Each level maps to an [`crate::ai::AiProfile`]
+/// (`Difficulty::profile`); the human's AI teammates always play at PRO.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Hash)]
+pub enum Difficulty {
+    Rookie,
+    #[default]
+    Pro,
+    Legend,
+}
+
+impl Difficulty {
+    pub fn label(self) -> &'static str {
+        match self {
+            Difficulty::Rookie => "ROOKIE",
+            Difficulty::Pro => "PRO",
+            Difficulty::Legend => "LEGEND",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        match self {
+            Difficulty::Rookie => Difficulty::Pro,
+            Difficulty::Pro => Difficulty::Legend,
+            Difficulty::Legend => Difficulty::Rookie,
+        }
+    }
+
+    pub fn profile(self) -> crate::ai::AiProfile {
+        match self {
+            Difficulty::Rookie => crate::ai::ROOKIE,
+            Difficulty::Pro => crate::ai::PRO,
+            Difficulty::Legend => crate::ai::LEGEND,
+        }
+    }
+}
+
 #[derive(Resource, Clone)]
 pub struct MatchConfig {
     pub mode: GameMode,
@@ -47,6 +83,7 @@ pub struct MatchConfig {
     pub away: [crate::roster::CharacterId; 3],
     pub quarter_secs: f32,
     pub shot_clock: f32,
+    pub difficulty: Difficulty,
 }
 
 /// Native builds can pick the boot arena with `FINNBALL_ARENA=<slug>` so an
@@ -72,6 +109,7 @@ impl Default for MatchConfig {
             away: [ReiWall, YunaSilk, ZeroGhost],
             quarter_secs: 60.0,
             shot_clock: 24.0,
+            difficulty: Difficulty::Pro,
         }
     }
 }

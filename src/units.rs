@@ -100,6 +100,9 @@ pub enum Pose {
     Dunk,
     Pass,
     Block,
+    /// Hands straight up in the shooter's face without leaving the floor
+    /// (closeout stance). Movement is still allowed.
+    Contest,
     Celebrate,
     Stumble,
 }
@@ -2160,6 +2163,22 @@ fn animate_rigs(
                 head_rot = Some(Quat::from_rotation_x(0.5));
                 track_ball = false;
             }
+            Pose::Contest => {
+                // Closeout: wide, low base with both arms reaching straight up —
+                // the "wall" the shooter sees before the release.
+                let reach = (tp * 9.0).sin() * 0.04;
+                arm_l = splay(-1.0) * fwd(2.85 + reach) * sway(-0.3);
+                arm_r = splay(1.0) * fwd(2.95 - reach) * sway(0.3);
+                elbow_l = fwd(0.12);
+                elbow_r = fwd(0.12);
+                knee_l = knee(0.5);
+                knee_r = knee(0.5);
+                leg_l = fwd(0.2) * sway(-0.24);
+                leg_r = fwd(0.2) * sway(0.24);
+                torso_y = 1.1;
+                torso_rot = lean(0.1);
+                stretch = 0.04;
+            }
             Pose::Celebrate => {
                 let bounce = (t * 8.0).sin();
                 match player.id.kit().celebration {
@@ -2302,7 +2321,7 @@ fn update_face_expr(
     let ball_pos = ball.single().ok().map(|(t, _)| t.translation);
     for (ptf, pose, face, mut expr, heat, stam, mut anim, rig) in &mut players {
         *expr = match *pose {
-            Pose::Shoot | Pose::Block | Pose::Pass => FaceExpr::Focus,
+            Pose::Shoot | Pose::Block | Pose::Contest | Pose::Pass => FaceExpr::Focus,
             Pose::Celebrate => FaceExpr::Celebrate,
             Pose::Stumble => FaceExpr::Pain,
             Pose::Dunk => FaceExpr::Angry,
