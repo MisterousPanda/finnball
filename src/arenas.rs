@@ -180,6 +180,10 @@ pub struct ArenaTheme {
 
 impl ArenaId {
     /// Snake-case key used by `scripts/worldlabs_env.py` and `assets/env/`.
+    pub fn from_slug(slug: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|a| a.slug() == slug)
+    }
+
     pub fn slug(self) -> &'static str {
         match self {
             ArenaId::NeoTokyo => "neo_tokyo",
