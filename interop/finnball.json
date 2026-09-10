@@ -1,0 +1,770 @@
+{
+  "schema": 1,
+  "name": "FINNBALL",
+  "description": "Anime street basketball interchange. Y-up metres, X along the court, player front is -Z.",
+  "engine": {
+    "bevy": "0.18",
+    "up": "y",
+    "units": "meters",
+    "forward": "-z"
+  },
+  "court": {
+    "half_length": 14.0,
+    "half_width": 7.5,
+    "rim_height": 3.05,
+    "rim_radius": 0.225,
+    "backboard_offset": 0.42,
+    "hoop_x": 12.55,
+    "ball_radius": 0.121,
+    "three_radius": 6.75,
+    "paint_depth": 5.8,
+    "paint_half_width": 2.45,
+    "player_radius": 0.38
+  },
+  "hoops": [
+    {
+      "id": "home",
+      "position": {
+        "x": -12.55,
+        "y": 3.05,
+        "z": 0.0
+      },
+      "faces": 1.0
+    },
+    {
+      "id": "away",
+      "position": {
+        "x": 12.55,
+        "y": 3.05,
+        "z": 0.0
+      },
+      "faces": -1.0
+    }
+  ],
+  "spawns": {
+    "home": [
+      {
+        "x": -3.5,
+        "y": 0.0,
+        "z": 0.0
+      },
+      {
+        "x": -5.5,
+        "y": 0.0,
+        "z": 3.2
+      },
+      {
+        "x": -5.5,
+        "y": 0.0,
+        "z": -3.2
+      }
+    ],
+    "away": [
+      {
+        "x": 3.5,
+        "y": 0.0,
+        "z": 0.0
+      },
+      {
+        "x": 5.5,
+        "y": 0.0,
+        "z": 3.2
+      },
+      {
+        "x": 5.5,
+        "y": 0.0,
+        "z": -3.2
+      }
+    ],
+    "ball_home": {
+      "x": -3.1,
+      "y": 1.1,
+      "z": 0.0
+    },
+    "ball_away": {
+      "x": 3.1,
+      "y": 1.1,
+      "z": 0.0
+    }
+  },
+  "teams": [
+    {
+      "id": "home",
+      "name": "NEON FOXES",
+      "abbrev": "FOX",
+      "primary": "#0dd9f2",
+      "secondary": "#ff338c"
+    },
+    {
+      "id": "away",
+      "name": "SHADOW CRANES",
+      "abbrev": "CRN",
+      "primary": "#9e38ff",
+      "secondary": "#140d29"
+    }
+  ],
+  "roster": [
+    {
+      "id": "kaito_flash",
+      "name": "KAITO FLASH",
+      "alias": "The Neon Point",
+      "quote": "If you blink, I already scored.",
+      "style": "Space-jam speedster. Blurs past bigs, finishes with a smirk.",
+      "height_m": 1.86,
+      "ratings": {
+        "speed": 99,
+        "three": 78,
+        "mid": 84,
+        "dunk": 62,
+        "handle": 91,
+        "pass": 88,
+        "steal": 80,
+        "block": 28,
+        "rebound": 42,
+        "strength": 58
+      },
+      "look": {
+        "hair": "spikes",
+        "hair_color": "#26d9ff",
+        "skin": "#f5d1b8",
+        "accent": "#33fff2",
+        "eye": "#1ad9ff"
+      },
+      "kit": {
+        "arm_sleeve": "right",
+        "knee_sleeve": "none",
+        "tattoo": "none",
+        "tights": false,
+        "headband": true,
+        "high_socks": false,
+        "shoe_primary": "#33fff2",
+        "shoe_secondary": "#f5f5f0",
+        "celebration": 0
+      }
+    },
+    {
+      "id": "mika_orbit",
+      "name": "MIKA ORBIT",
+      "alias": "Logo Sniper",
+      "quote": "Gravity is a suggestion.",
+      "style": "Logo threes, floaty hangtime, galaxy twin-tails.",
+      "height_m": 1.78,
+      "ratings": {
+        "speed": 82,
+        "three": 99,
+        "mid": 90,
+        "dunk": 40,
+        "handle": 86,
+        "pass": 80,
+        "steal": 70,
+        "block": 22,
+        "rebound": 38,
+        "strength": 48
+      },
+      "look": {
+        "hair": "twin_tails",
+        "hair_color": "#f259d9",
+        "skin": "#fce0d1",
+        "accent": "#ff73e6",
+        "eye": "#d940b3"
+      },
+      "kit": {
+        "arm_sleeve": "none",
+        "knee_sleeve": "left",
+        "tattoo": "none",
+        "tights": true,
+        "headband": false,
+        "high_socks": false,
+        "shoe_primary": "#f5f5f0",
+        "shoe_secondary": "#ff73e6",
+        "celebration": 2
+      }
+    },
+    {
+      "id": "jin_gravity",
+      "name": "JIN GRAVITY",
+      "alias": "Rim Breaker",
+      "quote": "The floor remembers me.",
+      "style": "Toon-physics dunks. Turns the paint into a cutscene.",
+      "height_m": 2.04,
+      "ratings": {
+        "speed": 68,
+        "three": 32,
+        "mid": 62,
+        "dunk": 99,
+        "handle": 55,
+        "pass": 48,
+        "steal": 40,
+        "block": 78,
+        "rebound": 86,
+        "strength": 97
+      },
+      "look": {
+        "hair": "buzz",
+        "hair_color": "#1f1f24",
+        "skin": "#8c6147",
+        "accent": "#ff731a",
+        "eye": "#f2d933"
+      },
+      "kit": {
+        "arm_sleeve": "none",
+        "knee_sleeve": "none",
+        "tattoo": "both",
+        "tights": false,
+        "headband": true,
+        "high_socks": false,
+        "shoe_primary": "#14141a",
+        "shoe_secondary": "#ff731a",
+        "celebration": 1
+      }
+    },
+    {
+      "id": "rei_wall",
+      "name": "REI WALL",
+      "alias": "The Eclipse",
+      "quote": "This paint is a locked gate.",
+      "style": "Shot-blocking center. Quiet, terrifying help D.",
+      "height_m": 2.11,
+      "ratings": {
+        "speed": 54,
+        "three": 28,
+        "mid": 55,
+        "dunk": 80,
+        "handle": 42,
+        "pass": 50,
+        "steal": 36,
+        "block": 99,
+        "rebound": 96,
+        "strength": 94
+      },
+      "look": {
+        "hair": "long",
+        "hair_color": "#14141f",
+        "skin": "#eddbcc",
+        "accent": "#8c59ff",
+        "eye": "#b38cff"
+      },
+      "kit": {
+        "arm_sleeve": "both",
+        "knee_sleeve": "none",
+        "tattoo": "none",
+        "tights": false,
+        "headband": false,
+        "high_socks": true,
+        "shoe_primary": "#14141a",
+        "shoe_secondary": "#8c59ff",
+        "celebration": 1
+      }
+    },
+    {
+      "id": "yuna_silk",
+      "name": "YUNA SILK",
+      "alias": "No-Look Queen",
+      "quote": "Don't watch the ball. Watch the idea.",
+      "style": "Playmaker who threads bounce passes through traffic.",
+      "height_m": 1.74,
+      "ratings": {
+        "speed": 88,
+        "three": 74,
+        "mid": 86,
+        "dunk": 30,
+        "handle": 96,
+        "pass": 99,
+        "steal": 84,
+        "block": 18,
+        "rebound": 40,
+        "strength": 44
+      },
+      "look": {
+        "hair": "ponytail",
+        "hair_color": "#faeb8c",
+        "skin": "#fadbc7",
+        "accent": "#ffe64d",
+        "eye": "#33b373"
+      },
+      "kit": {
+        "arm_sleeve": "none",
+        "knee_sleeve": "right",
+        "tattoo": "none",
+        "tights": false,
+        "headband": true,
+        "high_socks": false,
+        "shoe_primary": "#ffe64d",
+        "shoe_secondary": "#f5f5f0",
+        "celebration": 2
+      }
+    },
+    {
+      "id": "zero_ghost",
+      "name": "ZERO GHOST",
+      "alias": "The Pickpocket",
+      "quote": "I was never there. Your ball was.",
+      "style": "Lockdown wing. Steals that trigger the broadcast graphic.",
+      "height_m": 1.96,
+      "ratings": {
+        "speed": 90,
+        "three": 70,
+        "mid": 80,
+        "dunk": 74,
+        "handle": 82,
+        "pass": 68,
+        "steal": 99,
+        "block": 60,
+        "rebound": 58,
+        "strength": 72
+      },
+      "look": {
+        "hair": "messy",
+        "hair_color": "#8c26b3",
+        "skin": "#c79e80",
+        "accent": "#cc33ff",
+        "eye": "#e6e6ff"
+      },
+      "kit": {
+        "arm_sleeve": "left",
+        "knee_sleeve": "none",
+        "tattoo": "right",
+        "tights": true,
+        "headband": false,
+        "high_socks": false,
+        "shoe_primary": "#14141a",
+        "shoe_secondary": "#cc33ff",
+        "celebration": 0
+      }
+    },
+    {
+      "id": "luna_eclipse",
+      "name": "LUNA ECLIPSE",
+      "alias": "All-Court Witch",
+      "quote": "Every possession is a ritual.",
+      "style": "Two-way wing, night-sky aesthetic, clutch gene.",
+      "height_m": 1.88,
+      "ratings": {
+        "speed": 84,
+        "three": 86,
+        "mid": 84,
+        "dunk": 70,
+        "handle": 80,
+        "pass": 78,
+        "steal": 74,
+        "block": 55,
+        "rebound": 64,
+        "strength": 70
+      },
+      "look": {
+        "hair": "bob",
+        "hair_color": "#40338c",
+        "skin": "#f0d6c7",
+        "accent": "#73b3ff",
+        "eye": "#b3d9ff"
+      },
+      "kit": {
+        "arm_sleeve": "none",
+        "knee_sleeve": "both",
+        "tattoo": "none",
+        "tights": true,
+        "headband": false,
+        "high_socks": false,
+        "shoe_primary": "#73b3ff",
+        "shoe_secondary": "#14141a",
+        "celebration": 2
+      }
+    },
+    {
+      "id": "taro_titan",
+      "name": "TARO TITAN",
+      "alias": "Glass Cleaner",
+      "quote": "The miss belongs to me.",
+      "style": "Old-soul center. Offensive boards and put-backs.",
+      "height_m": 2.16,
+      "ratings": {
+        "speed": 48,
+        "three": 18,
+        "mid": 50,
+        "dunk": 88,
+        "handle": 35,
+        "pass": 40,
+        "steal": 28,
+        "block": 84,
+        "rebound": 99,
+        "strength": 99
+      },
+      "look": {
+        "hair": "afro",
+        "hair_color": "#331f14",
+        "skin": "#b8805c",
+        "accent": "#e63333",
+        "eye": "#66331a"
+      },
+      "kit": {
+        "arm_sleeve": "none",
+        "knee_sleeve": "both",
+        "tattoo": "both",
+        "tights": false,
+        "headband": true,
+        "high_socks": true,
+        "shoe_primary": "#e63333",
+        "shoe_secondary": "#f5f5f0",
+        "celebration": 1
+      }
+    },
+    {
+      "id": "aiko_prism",
+      "name": "AIKO PRISM",
+      "alias": "Highlight Reel",
+      "quote": "Make it look impossible, then easy.",
+      "style": "And-1 handles, rainbow floaters, twin drills.",
+      "height_m": 1.7,
+      "ratings": {
+        "speed": 92,
+        "three": 88,
+        "mid": 94,
+        "dunk": 55,
+        "handle": 98,
+        "pass": 84,
+        "steal": 78,
+        "block": 20,
+        "rebound": 36,
+        "strength": 46
+      },
+      "look": {
+        "hair": "drills",
+        "hair_color": "#26f28c",
+        "skin": "#fce6db",
+        "accent": "#33ff8c",
+        "eye": "#1ae680"
+      },
+      "kit": {
+        "arm_sleeve": "none",
+        "knee_sleeve": "left",
+        "tattoo": "none",
+        "tights": false,
+        "headband": false,
+        "high_socks": true,
+        "shoe_primary": "#f5f5f0",
+        "shoe_secondary": "#33ff8c",
+        "celebration": 2
+      }
+    },
+    {
+      "id": "kenji_volt",
+      "name": "KENJI VOLT",
+      "alias": "Baseline Lightning",
+      "quote": "Catch me on the rise.",
+      "style": "Slash-first wing. Tomahawks and transition hammers.",
+      "height_m": 1.93,
+      "ratings": {
+        "speed": 94,
+        "three": 66,
+        "mid": 76,
+        "dunk": 92,
+        "handle": 78,
+        "pass": 62,
+        "steal": 72,
+        "block": 48,
+        "rebound": 60,
+        "strength": 80
+      },
+      "look": {
+        "hair": "mohawk",
+        "hair_color": "#ffe633",
+        "skin": "#e6bd99",
+        "accent": "#ffd91a",
+        "eye": "#ffb31a"
+      },
+      "kit": {
+        "arm_sleeve": "right",
+        "knee_sleeve": "none",
+        "tattoo": "left",
+        "tights": false,
+        "headband": true,
+        "high_socks": false,
+        "shoe_primary": "#14141a",
+        "shoe_secondary": "#ffd91a",
+        "celebration": 0
+      }
+    }
+  ],
+  "arenas": [
+    {
+      "id": "neo_tokyo",
+      "name": "NEO-TOKYO DOME",
+      "subtitle": "Rain-slick cyber court. Broadcast from Shibuya skyline.",
+      "bounce": 0.72,
+      "hangtime": 1.0,
+      "env_pano": "env/neo_tokyo.jpg",
+      "palette": {
+        "floor_a": "#613b24",
+        "floor_b": "#452617",
+        "accent": "#1af2ff",
+        "apron": "#0d1221",
+        "line": "#33f2ff",
+        "paint": "#1f598c",
+        "ambient": "#4073b3",
+        "fog": "#050a1a",
+        "crowd": "#141f38",
+        "roof": "#05080f",
+        "sky": "#04050d",
+        "suite_glow": "#4dccff",
+        "emissive": [
+          0.1,
+          1.4,
+          2.0,
+          1.0
+        ]
+      },
+      "banner_years": [
+        "2088",
+        "2091",
+        "2093",
+        "2094",
+        "2097"
+      ],
+      "retired": [
+        {
+          "number": "7",
+          "name": "AKIRA"
+        },
+        {
+          "number": "23",
+          "name": "HANA"
+        },
+        {
+          "number": "0",
+          "name": "GHOST"
+        }
+      ],
+      "ribbon_words": [
+        "FINNBALL",
+        "NEO-TOKYO DOME",
+        "NEON FOXES",
+        "SHADOW CRANES",
+        "SHIBUYA NIGHTS"
+      ]
+    },
+    {
+      "id": "toon_world",
+      "name": "TOON WORLD ARENA",
+      "subtitle": "Looney physics. The rim is a punchline waiting to happen.",
+      "bounce": 0.88,
+      "hangtime": 1.22,
+      "env_pano": "env/toon_world.jpg",
+      "palette": {
+        "floor_a": "#edad57",
+        "floor_b": "#d18c3d",
+        "accent": "#ffe633",
+        "apron": "#295cd9",
+        "line": "#ffffff",
+        "paint": "#f23340",
+        "ambient": "#f2d98c",
+        "fog": "#8cbfff",
+        "crowd": "#d9408c",
+        "roof": "#8cccff",
+        "sky": "#73bfff",
+        "suite_glow": "#ffd966",
+        "emissive": [
+          2.0,
+          1.2,
+          0.2,
+          1.0
+        ]
+      },
+      "banner_years": [
+        "1940",
+        "1953",
+        "1966",
+        "1988",
+        "1996"
+      ],
+      "retired": [
+        {
+          "number": "1",
+          "name": "BUGS"
+        },
+        {
+          "number": "99",
+          "name": "DUCK"
+        },
+        {
+          "number": "33",
+          "name": "TAZ"
+        }
+      ],
+      "ribbon_words": [
+        "FINNBALL",
+        "TOON WORLD ARENA",
+        "NEON FOXES",
+        "SHADOW CRANES",
+        "THAT'S ALL FOLKS"
+      ]
+    },
+    {
+      "id": "sky_temple",
+      "name": "SKY TEMPLE COURT",
+      "subtitle": "Moonlit hardwood above the clouds. Cherry-petal drift.",
+      "bounce": 0.7,
+      "hangtime": 1.12,
+      "env_pano": "env/sky_temple.jpg",
+      "palette": {
+        "floor_a": "#8f3d33",
+        "floor_b": "#702b26",
+        "accent": "#ff8ccc",
+        "apron": "#1f0f26",
+        "line": "#ffd18c",
+        "paint": "#731f2e",
+        "ambient": "#7359b3",
+        "fog": "#140d24",
+        "crowd": "#381a2e",
+        "roof": "#0d081f",
+        "sky": "#0a081f",
+        "suite_glow": "#ff99cc",
+        "emissive": [
+          1.6,
+          0.7,
+          1.4,
+          1.0
+        ]
+      },
+      "banner_years": [
+        "1603",
+        "1868",
+        "1964",
+        "2020",
+        "2025"
+      ],
+      "retired": [
+        {
+          "number": "5",
+          "name": "SAKURA"
+        },
+        {
+          "number": "11",
+          "name": "TSUKI"
+        },
+        {
+          "number": "77",
+          "name": "KAGE"
+        }
+      ],
+      "ribbon_words": [
+        "FINNBALL",
+        "SKY TEMPLE COURT",
+        "NEON FOXES",
+        "SHADOW CRANES",
+        "MOONLIGHT LEAGUE"
+      ]
+    },
+    {
+      "id": "underground",
+      "name": "UNDERGROUND CIRCUIT",
+      "subtitle": "Chain nets, graffiti walls, illegal wattage.",
+      "bounce": 0.64,
+      "hangtime": 0.96,
+      "env_pano": "env/underground.jpg",
+      "palette": {
+        "floor_a": "#524f4d",
+        "floor_b": "#3d3d40",
+        "accent": "#ffd933",
+        "apron": "#141412",
+        "line": "#ffd933",
+        "paint": "#0d0d0d",
+        "ambient": "#806640",
+        "fog": "#0a0a08",
+        "crowd": "#1f1f1a",
+        "roof": "#0a0a09",
+        "sky": "#080806",
+        "suite_glow": "#ffbf40",
+        "emissive": [
+          1.8,
+          1.1,
+          0.15,
+          1.0
+        ]
+      },
+      "banner_years": [
+        "1979",
+        "1984",
+        "1991",
+        "2004",
+        "2016"
+      ],
+      "retired": [
+        {
+          "number": "13",
+          "name": "REBEL"
+        },
+        {
+          "number": "44",
+          "name": "KING"
+        },
+        {
+          "number": "8",
+          "name": "WIRE"
+        }
+      ],
+      "ribbon_words": [
+        "FINNBALL",
+        "UNDERGROUND CIRCUIT",
+        "NEON FOXES",
+        "SHADOW CRANES",
+        "NO REFS NO RULES"
+      ]
+    },
+    {
+      "id": "crystal_coliseum",
+      "name": "CRYSTAL COLISEUM",
+      "subtitle": "Esports cathedral. Holo-ads, glass floor, 40k headsets.",
+      "bounce": 0.74,
+      "hangtime": 1.04,
+      "env_pano": "env/crystal_coliseum.jpg",
+      "palette": {
+        "floor_a": "#ccad80",
+        "floor_b": "#b39466",
+        "accent": "#99ffff",
+        "apron": "#1a1f33",
+        "line": "#bff2ff",
+        "paint": "#402673",
+        "ambient": "#8cb3f2",
+        "fog": "#0d121f",
+        "crowd": "#141a2e",
+        "roof": "#080d1a",
+        "sky": "#050812",
+        "suite_glow": "#80e6ff",
+        "emissive": [
+          0.6,
+          1.6,
+          2.2,
+          1.0
+        ]
+      },
+      "banner_years": [
+        "2019",
+        "2021",
+        "2022",
+        "2024",
+        "2026"
+      ],
+      "retired": [
+        {
+          "number": "1",
+          "name": "PRISM"
+        },
+        {
+          "number": "10",
+          "name": "NOVA"
+        },
+        {
+          "number": "42",
+          "name": "GLITCH"
+        }
+      ],
+      "ribbon_words": [
+        "FINNBALL",
+        "CRYSTAL COLISEUM",
+        "NEON FOXES",
+        "SHADOW CRANES",
+        "GG WORLDS"
+      ]
+    }
+  ]
+}

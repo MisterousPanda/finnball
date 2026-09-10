@@ -7,7 +7,7 @@ use crate::sim::{
     ballistic_velocity, clamp_to_court, classify_shot, contest_with_hands, dribble_cadence,
     flight_time_for_distance, in_paint, intercept_reach, meter_accuracy, release_height,
     release_spin, shot_kind, shot_make_chance, steal_chance, PassKind, ShotType, GRAVITY, HOOP_X,
-    PAINT_DEPTH, RIM_HEIGHT,
+    PAINT_DEPTH, RIM_HEIGHT, TIPOFF_BALL_AWAY, TIPOFF_BALL_HOME,
 };
 use crate::states::{AppState, GameMode, MatchConfig, Paused};
 use crate::units::{
@@ -225,16 +225,8 @@ fn start_match(
     commands.insert_resource(LastPass::default());
     whistle.write(TipWhistle);
 
-    let home_spots = [
-        Vec3::new(-3.5, 0.0, 0.0),
-        Vec3::new(-5.5, 0.0, 3.2),
-        Vec3::new(-5.5, 0.0, -3.2),
-    ];
-    let away_spots = [
-        Vec3::new(3.5, 0.0, 0.0),
-        Vec3::new(5.5, 0.0, 3.2),
-        Vec3::new(5.5, 0.0, -3.2),
-    ];
+    let home_spots = crate::sim::TIPOFF_HOME.map(|p| Vec3::from_array(p));
+    let away_spots = crate::sim::TIPOFF_AWAY.map(|p| Vec3::from_array(p));
 
     let mut first_human = None;
     for (i, id) in config.home.iter().enumerate() {
@@ -249,7 +241,9 @@ fn start_match(
             human,
             home_spots[i],
         );
-        commands.entity(e).insert(AiBrain::with_think(i as f32 * 0.2));
+        commands
+            .entity(e)
+            .insert(AiBrain::with_think(i as f32 * 0.2));
         if human {
             first_human = Some(e);
         }
@@ -266,7 +260,9 @@ fn start_match(
                 false,
                 away_spots[i],
             );
-            commands.entity(e).insert(AiBrain::with_think(0.4 + i as f32 * 0.15));
+            commands
+                .entity(e)
+                .insert(AiBrain::with_think(0.4 + i as f32 * 0.15));
         }
     }
     control.entity = first_human;
@@ -275,7 +271,7 @@ fn start_match(
         &mut meshes,
         &mut materials,
         &mut images,
-        Vec3::new(-3.1, 1.1, 0.0),
+        Vec3::from_array(TIPOFF_BALL_HOME),
     );
     if let Some(holder) = first_human {
         commands.entity(ball).insert(crate::ball::BallState {
@@ -381,11 +377,11 @@ fn reset_to_half(
     }
     let holder = if give_home { home_holder } else { away_holder };
     if let Ok((mut tf, mut vel, mut st)) = ball.single_mut() {
-        tf.translation = if give_home {
-            Vec3::new(-3.1, 1.1, 0.0)
+        tf.translation = Vec3::from_array(if give_home {
+            TIPOFF_BALL_HOME
         } else {
-            Vec3::new(3.1, 1.1, 0.0)
-        };
+            TIPOFF_BALL_AWAY
+        });
         vel.0 = Vec3::ZERO;
         st.hold = if holder.is_some() {
             Hold::Held
@@ -1127,8 +1123,7 @@ fn block_attempts(
         return;
     };
     for actor in actors {
-        let Ok((_, _, ratings, ptf, mut pose, mut clock, mut boxl)) = players.get_mut(actor)
-        else {
+        let Ok((_, _, ratings, ptf, mut pose, mut clock, mut boxl)) = players.get_mut(actor) else {
             continue;
         };
         *pose = Pose::Block;
@@ -1138,7 +1133,8 @@ fn block_attempts(
         }
         // Horizontal distance: the ball is ~2 m up at release, so a 3D distance
         // would put even a defender standing on the shooter's toes outside reach.
-        let d = (ptf.translation.x - btf.translation.x).hypot(ptf.translation.z - btf.translation.z);
+        let d =
+            (ptf.translation.x - btf.translation.x).hypot(ptf.translation.z - btf.translation.z);
         let window = btf.translation.y > 1.6 && btf.translation.y < 3.2;
         let chance = (ratings.block / 100.0) * (0.9 - d * 0.4).clamp(0.0, 1.0);
         if window && d < 2.2 && rng.f32() < chance {

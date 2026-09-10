@@ -13,3 +13,10 @@ www/game
 www/assets
 
 wt/
+
+# Unreal local junk if someone opens the sample project
+unreal/Saved/
+unreal/Intermediate/
+unreal/Binaries/
+unreal/DerivedDataCache/
+unreal/.vs/

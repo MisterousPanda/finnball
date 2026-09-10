@@ -1,0 +1,24 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "0.1.0",
+  "FriendlyName": "FINNBALL",
+  "Description": "Import the FINNBALL 3v3 court, roster, and arenas from interop/finnball.json",
+  "Category": "Sports",
+  "CreatedBy": "FINNBALL",
+  "CreatedByURL": "https://github.com/MisterousPanda/finnball",
+  "DocsURL": "https://github.com/MisterousPanda/finnball/blob/main/docs/dcc.md",
+  "MarketplaceURL": "",
+  "SupportURL": "",
+  "CanContainContent": true,
+  "IsBetaVersion": true,
+  "IsExperimentalVersion": false,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "Finnball",
+      "Type": "Runtime",
+      "LoadingPhase": "Default"
+    }
+  ]
+}

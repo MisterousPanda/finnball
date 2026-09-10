@@ -11,6 +11,8 @@ mod gameplay;
 #[cfg(any(test, feature = "gym"))]
 mod gym;
 mod input;
+#[allow(dead_code)]
+mod interop;
 mod quality;
 mod roster;
 mod sim;

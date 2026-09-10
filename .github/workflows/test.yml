@@ -24,3 +24,5 @@ jobs:
             libxrandr-dev
       - name: test
         run: cargo test
+      - name: dcc interchange
+        run: python3 scripts/finnball_dcc.py --self-test
