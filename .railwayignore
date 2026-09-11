@@ -12,3 +12,11 @@ node_modules
 package-lock.json
 wt
 www/pkg
+# Engine/DCC sources never ship; only the staged www/ tree does.
+unity
+unreal
+blender
+interop
+src
+assets
+scripts
