@@ -13,10 +13,13 @@ package-lock.json
 wt
 www/pkg
 # Engine/DCC sources never ship; only the staged www/ tree does.
-unity
-unreal
-blender
-interop
-src
-assets
-scripts
+# Anchored with a leading slash: bare `unity`/`assets` would also match
+# www/unity and www/assets (gitignore semantics) and drop them from the bundle.
+/unity
+/unreal
+/blender
+/interop
+/src
+/assets
+/scripts
+/docs

@@ -3,8 +3,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 rustup target add wasm32-unknown-unknown
-if ! command -v wasm-bindgen >/dev/null 2>&1; then
-  cargo install wasm-bindgen-cli --locked
+# wasm-bindgen-cli must match the wasm-bindgen crate in Cargo.lock exactly
+# (the ABI schema is unstable); a newer global CLI fails with a schema error.
+WB_VER="$(awk '/^name = "wasm-bindgen"$/{f=1} f&&/^version/{gsub(/"/,"",$3); print $3; exit}' Cargo.lock)"
+if ! command -v wasm-bindgen >/dev/null 2>&1 || [[ "$(wasm-bindgen --version | awk '{print $2}')" != "$WB_VER" ]]; then
+  echo "Installing wasm-bindgen-cli $WB_VER to match Cargo.lock..."
+  cargo install wasm-bindgen-cli --version "$WB_VER" --locked
 fi
 echo "Building FINNBALL wasm (this can take a while)..."
 cargo build --profile wasm-release --target wasm32-unknown-unknown

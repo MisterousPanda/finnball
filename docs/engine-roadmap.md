@@ -42,7 +42,7 @@ Everything below is free unless marked. Fill in the "done" column as you go.
 | --- | --- | --- | --- | --- | --- |
 | 1 | **Unity ID** (already have) | Editor license, Asset Store | `unity auth login` then `unity license` should list Personal. Already working on this Mac. | Personal: free under $200K revenue/funding in 12 mo. Pro $2,310/yr only if you cross that | ☐ |
 | 2 | **Unity Hub modules** | WebGL + Mac already installed | For iOS/Android later: `unity install-modules --version 6000.6.0f1 ios android` | free | ☐ |
-| 3 | **Railway** (already have) | Hosting | `railway login && railway link` in repo root. For CI: create a project token → GitHub secret `RAILWAY_TOKEN` | Hobby $5/mo (incl. $5 usage). Static nginx fits Hobby. Pro $20/mo only for team features | ☐ |
+| 3 | **Railway** (already have) | Hosting | `railway login && railway link` in repo root — done, linked to `finnball`/`production`. For CI: create a project token → GitHub secret `RAILWAY_TOKEN` | Hobby $5/mo (incl. $5 usage). Static nginx fits Hobby. Pro $20/mo only for team features | ☑ |
 | 4 | **GitHub Actions secrets for Unity CI** (optional, for automated WebGL builds) | Build WebGL on push | Use `game-ci/unity-builder`. Secrets: `UNITY_EMAIL`, `UNITY_PASSWORD`, `UNITY_LICENSE` (contents of a `.ulf` from `unity license` / manual activation). Public repos get free minutes | free | ☐ |
 | 5 | **Epic Games account** + Epic Games Launcher | Unreal Engine, Fab/Quixel assets | Install UE 5.8 (or newest 5.x). Open `unreal/Finnball.uproject` once so it generates project files | free; 5% royalty only after $1M lifetime revenue per product | ☐ |
 | 6 | **Blender 4.2+ LTS** | Assets | Install from blender.org. Preferences → Add-ons → Install from Disk → `blender/finnball`. No account needed | free | ☐ |
@@ -121,9 +121,11 @@ One nginx service serves both clients from `www/`:
 /unity/    Unity WebGL (www/unity)
 ```
 
-- [ ] `./scripts/build-web.sh` (Bevy) and `./scripts/build-unity-web.sh` (Unity) so `www/game` and `www/unity` both exist
-- [ ] `./scripts/deploy-railway.sh` — uploads `www/` + `Dockerfile` + `deploy/`; `.railwayignore` drops `unity/`, `unreal/`, `blender/`, `src/`, `target/`
-- [ ] Verify: `curl -I https://<app>.up.railway.app/unity/Build/WebGL.loader.js` → 200 `application/javascript`
+- [x] `railway link -p finnball -e production` (service auto-selected: `finnball`, Dockerfile builder, region ams)
+- [x] `./scripts/build-web.sh` (Bevy) and `./scripts/build-unity-web.sh` (Unity) so `www/game` and `www/unity` both exist
+- [x] `./scripts/deploy-railway.sh` — uploads `www/` + `Dockerfile` + `deploy/`; `.railwayignore` drops `/unity`, `/unreal`, `/blender`, `/src`, `target/` (patterns are anchored — a bare `unity` would also drop `www/unity`)
+- [x] Verify: `curl -I https://finnball-production.up.railway.app/unity/Build/WebGL.loader.js` → 200 `application/javascript` (2026-09-11: Bevy at `/` and Unity at `/unity/` both live)
+- Gotchas hit on first deploy: `wasm-bindgen-cli` must match the `wasm-bindgen` version in `Cargo.lock` (0.2.127 → `cargo install wasm-bindgen-cli --version 0.2.127`); install `binaryen` (`brew install binaryen`) or `build-web.sh` ships a ~10% larger unoptimised wasm.
 - [ ] Optional later: a second Railway service (Rust/Node) for leaderboards / WebSocket relay + Railway Postgres; both clients read the same `interop/finnball.json` so the API can validate box scores against the sim.
 - [ ] Optional: turn off `decompressionFallback` in `FinnballBatch.BuildWebGL` once nginx `.br` headers are confirmed on Railway (faster loads; the config already sets `Content-Encoding: br`).
 
