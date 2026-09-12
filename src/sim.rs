@@ -13,6 +13,12 @@ pub const PAINT_HALF_WIDTH: f32 = 2.45;
 pub const GRAVITY: f32 = 16.2;
 pub const PLAYER_RADIUS: f32 = 0.38;
 
+/// Tip-off spots (Y-up metres, Bevy / Unity space). Slot 0 is the ball handler.
+pub const TIPOFF_HOME: [[f32; 3]; 3] = [[-3.5, 0.0, 0.0], [-5.5, 0.0, 3.2], [-5.5, 0.0, -3.2]];
+pub const TIPOFF_AWAY: [[f32; 3]; 3] = [[3.5, 0.0, 0.0], [5.5, 0.0, 3.2], [5.5, 0.0, -3.2]];
+pub const TIPOFF_BALL_HOME: [f32; 3] = [-3.1, 1.1, 0.0];
+pub const TIPOFF_BALL_AWAY: [f32; 3] = [3.1, 1.1, 0.0];
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ShotKind {
     Two,
@@ -516,5 +522,15 @@ mod tests {
             2.0,
             hoop
         ));
+    }
+
+    #[test]
+    fn tipoff_spots_are_in_bounds() {
+        for p in TIPOFF_HOME.iter().chain(TIPOFF_AWAY.iter()) {
+            assert!(in_bounds(p[0], p[2], PLAYER_RADIUS));
+            assert_eq!(p[1], 0.0);
+        }
+        assert!(in_bounds(TIPOFF_BALL_HOME[0], TIPOFF_BALL_HOME[2], 0.0));
+        assert!(in_bounds(TIPOFF_BALL_AWAY[0], TIPOFF_BALL_AWAY[2], 0.0));
     }
 }

@@ -28,6 +28,21 @@ impl CharacterId {
         Self::KenjiVolt,
     ];
 
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::KaitoFlash => "kaito_flash",
+            Self::MikaOrbit => "mika_orbit",
+            Self::JinGravity => "jin_gravity",
+            Self::ReiWall => "rei_wall",
+            Self::YunaSilk => "yuna_silk",
+            Self::ZeroGhost => "zero_ghost",
+            Self::LunaEclipse => "luna_eclipse",
+            Self::TaroTitan => "taro_titan",
+            Self::AikoPrism => "aiko_prism",
+            Self::KenjiVolt => "kenji_volt",
+        }
+    }
+
     pub fn profile(self) -> CharacterProfile {
         match self {
             Self::KaitoFlash => CharacterProfile {
@@ -288,6 +303,23 @@ pub enum HairStyle {
     Mohawk,
 }
 
+impl HairStyle {
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Spikes => "spikes",
+            Self::TwinTails => "twin_tails",
+            Self::Buzz => "buzz",
+            Self::Long => "long",
+            Self::Ponytail => "ponytail",
+            Self::Messy => "messy",
+            Self::Bob => "bob",
+            Self::Afro => "afro",
+            Self::Drills => "drills",
+            Self::Mohawk => "mohawk",
+        }
+    }
+}
+
 /// Which limbs a piece of kit is worn on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Wear {
@@ -299,6 +331,15 @@ pub enum Wear {
 
 impl Wear {
     /// `sx` is -1 for the left limb and +1 for the right one.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Wear::None => "none",
+            Wear::Left => "left",
+            Wear::Right => "right",
+            Wear::Both => "both",
+        }
+    }
+
     pub fn on(self, sx: f32) -> bool {
         match self {
             Wear::None => false,
@@ -522,6 +563,10 @@ mod tests {
         names.sort();
         names.dedup();
         assert_eq!(names.len(), 10);
+        let mut slugs: Vec<_> = CharacterId::ALL.iter().map(|c| c.slug()).collect();
+        slugs.sort();
+        slugs.dedup();
+        assert_eq!(slugs.len(), 10);
     }
 
     #[test]

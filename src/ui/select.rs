@@ -140,7 +140,7 @@ fn setup_chars(mut commands: Commands, mut draft: ResMut<LineupDraft>) {
                         PickChar(id),
                         Node {
                             width: px(230),
-                            height: px(124),
+                            height: px(148),
                             margin: UiRect::all(px(6)),
                             padding: UiRect::all(px(10)),
                             flex_direction: FlexDirection::Column,
@@ -153,6 +153,11 @@ fn setup_chars(mut commands: Commands, mut draft: ResMut<LineupDraft>) {
                         children![
                             (Text::new(p.name), title_font(14.0), TextColor(CYAN)),
                             (Text::new(p.alias), title_font(12.0), TextColor(MAGENTA)),
+                            (
+                                Text::new(id.signature().name),
+                                title_font(11.0),
+                                TextColor(GOLD),
+                            ),
                             (
                                 Text::new(format!(
                                     "SPD {:>2}   3PT {:>2}   DUNK {:>2}\nSTL {:>2}   BLK {:>2}   REB {:>2}",

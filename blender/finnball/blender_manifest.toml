@@ -1,0 +1,11 @@
+schema_version = "1.0.0"
+id = "finnball"
+version = "0.1.0"
+name = "FINNBALL"
+tagline = "Import the FINNBALL court, roster, and arenas"
+maintainer = "MisterousPanda"
+type = "add-on"
+tags = ["Import-Export", "Add Mesh"]
+blender_version_min = "4.2.0"
+license = ["SPDX:MIT"]
+website = "https://github.com/MisterousPanda/finnball"

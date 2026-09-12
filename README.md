@@ -103,11 +103,30 @@ Open **https://finnball-production.up.railway.app** in a WebGL2 browser.
 Vercel can still serve `www/` as static files if you prebuild WASM, but Railway is the path this repo is wired for.
 
 
+## Unity, Unreal, Blender
+
+The shipped game is Bevy. Court numbers, the ten legends, and the five arena palettes also export to `interop/finnball.json` so you can block the same 3v3 floor in other tools:
+
+| Tool | What to open |
+| --- | --- |
+| Blender 4.2+ | `blender/finnball` add-on → File → Import → FINNBALL Manifest |
+| Unity 2022.3+ | `unity/com.finnball.interop` UPM package → FINNBALL → Import Court |
+| Unreal 5.5 | `unreal/Plugins/Finnball` + `unreal/Scripts/import_finnball.py` |
+
+```bash
+python3 scripts/finnball_dcc.py validate
+python3 scripts/finnball_dcc.py gltf --arena neo_tokyo
+UPDATE_INTEROP=1 cargo test interop::    # after changing sim/roster/arenas
+```
+
+Spaces and install steps: [docs/dcc.md](docs/dcc.md).
+
 ## Architecture
 
 ```
 src/
   sim.rs        basketball math (tested without a GPU)
+  interop.rs    Unity / Unreal / Blender JSON dump
   roster.rs     ten legends + ratings
   arenas.rs     five court themes
   court.rs      3D floor, rims, stadium, lights

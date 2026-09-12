@@ -311,10 +311,11 @@ fn refresh_hud(
             };
             for mut t in &mut play_t {
                 *t = Text::new(format!(
-                    "{}{}\n{}  CAM {:?}  STM {:02.0}%\nPTS {}  AST {}  REB {}  STL {}",
+                    "{}{}\n{}  ·  {}\nCAM {:?}  STM {:02.0}%\nPTS {}  AST {}  REB {}  STL {}",
                     p.id.profile().name,
                     fire,
                     p.id.profile().alias,
+                    p.id.signature().name,
                     cam.mode,
                     stam.0 * 100.0,
                     boxl.pts,
