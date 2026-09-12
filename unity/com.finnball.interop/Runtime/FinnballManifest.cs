@@ -105,7 +105,17 @@ namespace Finnball
         public float height_m;
         public FinnballRatings ratings;
         public FinnballLook look;
+        public FinnballSkill skill;
+        public string portrait;
         public FinnballKit kit;
+    }
+
+    [Serializable]
+    public class FinnballSkill
+    {
+        public string id;
+        public string name;
+        public string hook;
     }
 
     [Serializable]
@@ -156,6 +166,7 @@ namespace Finnball
         public float bounce;
         public float hangtime;
         public string env_pano;
+        public string plate;
         public FinnballPalette palette;
         public string[] banner_years;
         public FinnballRetired[] retired;

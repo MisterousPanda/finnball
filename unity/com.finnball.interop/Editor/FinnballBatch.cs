@@ -85,6 +85,17 @@ namespace Finnball.Editor
             var dst = Path.Combine(Application.streamingAssetsPath, FinnballManifestLocator.StreamingName);
             Directory.CreateDirectory(Path.GetDirectoryName(dst));
             File.Copy(repo, dst, true);
+            var assets = Path.Combine(Directory.GetParent(Path.GetDirectoryName(repo)).FullName, "assets");
+            foreach (var folder in new[] { "portraits", "env/plates" })
+            {
+                var src = Path.Combine(assets, folder);
+                var staged = Path.Combine(Application.streamingAssetsPath, folder);
+                if (!Directory.Exists(src))
+                    continue;
+                Directory.CreateDirectory(staged);
+                foreach (var file in Directory.GetFiles(src, "*.png"))
+                    File.Copy(file, Path.Combine(staged, Path.GetFileName(file)), true);
+            }
             AssetDatabase.Refresh();
         }
 

@@ -130,6 +130,12 @@
         "accent": "#33fff2",
         "eye": "#1ad9ff"
       },
+      "skill": {
+        "id": "blink_drive",
+        "name": "BLINK DRIVE",
+        "hook": "Transition speed burst. Green window opens on the break."
+      },
+      "portrait": "portraits/kaito_flash.png",
       "kit": {
         "arm_sleeve": "right",
         "knee_sleeve": "none",
@@ -168,6 +174,12 @@
         "accent": "#ff73e6",
         "eye": "#d940b3"
       },
+      "skill": {
+        "id": "logo_gravity",
+        "name": "LOGO GRAVITY",
+        "hook": "Threes from the arc and the logo hang longer and drop more."
+      },
+      "portrait": "portraits/mika_orbit.png",
       "kit": {
         "arm_sleeve": "none",
         "knee_sleeve": "left",
@@ -206,6 +218,12 @@
         "accent": "#ff731a",
         "eye": "#f2d933"
       },
+      "skill": {
+        "id": "floor_remembers",
+        "name": "FLOOR REMEMBERS",
+        "hook": "Paint finishes and posterizes shrug off a body."
+      },
+      "portrait": "portraits/jin_gravity.png",
       "kit": {
         "arm_sleeve": "none",
         "knee_sleeve": "none",
@@ -244,6 +262,12 @@
         "accent": "#8c59ff",
         "eye": "#b38cff"
       },
+      "skill": {
+        "id": "locked_gate",
+        "name": "LOCKED GATE",
+        "hook": "Help D in the paint takes a much bigger bite out of the shot."
+      },
+      "portrait": "portraits/rei_wall.png",
       "kit": {
         "arm_sleeve": "both",
         "knee_sleeve": "none",
@@ -282,6 +306,12 @@
         "accent": "#ffe64d",
         "eye": "#33b373"
       },
+      "skill": {
+        "id": "watch_the_idea",
+        "name": "WATCH THE IDEA",
+        "hook": "Skip and bounce passes are harder to pick off."
+      },
+      "portrait": "portraits/yuna_silk.png",
       "kit": {
         "arm_sleeve": "none",
         "knee_sleeve": "right",
@@ -320,6 +350,12 @@
         "accent": "#cc33ff",
         "eye": "#e6e6ff"
       },
+      "skill": {
+        "id": "never_there",
+        "name": "NEVER THERE",
+        "hook": "Reach-in steals connect from a step farther than they should."
+      },
+      "portrait": "portraits/zero_ghost.png",
       "kit": {
         "arm_sleeve": "left",
         "knee_sleeve": "none",
@@ -358,6 +394,12 @@
         "accent": "#73b3ff",
         "eye": "#b3d9ff"
       },
+      "skill": {
+        "id": "clutch_ritual",
+        "name": "CLUTCH RITUAL",
+        "hook": "Last eight seconds of the shot clock: the meter forgives."
+      },
+      "portrait": "portraits/luna_eclipse.png",
       "kit": {
         "arm_sleeve": "none",
         "knee_sleeve": "both",
@@ -396,6 +438,12 @@
         "accent": "#e63333",
         "eye": "#66331a"
       },
+      "skill": {
+        "id": "miss_belongs",
+        "name": "MISS BELONGS",
+        "hook": "Offensive glass and put-backs belong to the Titan."
+      },
+      "portrait": "portraits/taro_titan.png",
       "kit": {
         "arm_sleeve": "none",
         "knee_sleeve": "both",
@@ -434,6 +482,12 @@
         "accent": "#33ff8c",
         "eye": "#1ae680"
       },
+      "skill": {
+        "id": "impossible_easy",
+        "name": "IMPOSSIBLE EASY",
+        "hook": "Contested mid-range floaters stay live."
+      },
+      "portrait": "portraits/aiko_prism.png",
       "kit": {
         "arm_sleeve": "none",
         "knee_sleeve": "left",
@@ -472,6 +526,12 @@
         "accent": "#ffd91a",
         "eye": "#ffb31a"
       },
+      "skill": {
+        "id": "on_the_rise",
+        "name": "ON THE RISE",
+        "hook": "Baseline drives in transition finish above the rim."
+      },
+      "portrait": "portraits/kenji_volt.png",
       "kit": {
         "arm_sleeve": "right",
         "knee_sleeve": "none",
@@ -493,6 +553,7 @@
       "bounce": 0.72,
       "hangtime": 1.0,
       "env_pano": "env/neo_tokyo.jpg",
+      "plate": "env/plates/neo_tokyo.png",
       "palette": {
         "floor_a": "#613b24",
         "floor_b": "#452617",
@@ -549,6 +610,7 @@
       "bounce": 0.88,
       "hangtime": 1.22,
       "env_pano": "env/toon_world.jpg",
+      "plate": "env/plates/toon_world.png",
       "palette": {
         "floor_a": "#edad57",
         "floor_b": "#d18c3d",
@@ -605,6 +667,7 @@
       "bounce": 0.7,
       "hangtime": 1.12,
       "env_pano": "env/sky_temple.jpg",
+      "plate": "env/plates/sky_temple.png",
       "palette": {
         "floor_a": "#8f3d33",
         "floor_b": "#702b26",
@@ -661,6 +724,7 @@
       "bounce": 0.64,
       "hangtime": 0.96,
       "env_pano": "env/underground.jpg",
+      "plate": "env/plates/underground.png",
       "palette": {
         "floor_a": "#524f4d",
         "floor_b": "#3d3d40",
@@ -717,6 +781,7 @@
       "bounce": 0.74,
       "hangtime": 1.04,
       "env_pano": "env/crystal_coliseum.jpg",
+      "plate": "env/plates/crystal_coliseum.png",
       "palette": {
         "floor_a": "#ccad80",
         "floor_b": "#b39466",

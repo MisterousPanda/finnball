@@ -1,3 +1,4 @@
+using System.IO;
 using UnityEngine;
 
 namespace Finnball
@@ -68,29 +69,66 @@ namespace Finnball
             ball.transform.localScale = Vector3.one * (court.ball_radius * 2f);
             Tint(ball, new Color(0.85f, 0.35f, 0.12f));
 
+            var homeIds = new[] { 0, 1, 2 };
+            var awayIds = new[] { 3, 4, 5 };
             foreach (var team in data.teams)
             {
                 var spots = team.id == "home" ? data.spawns.home : data.spawns.away;
-                var color = FinnballColor.Parse(team.primary);
+                var lineup = team.id == "home" ? homeIds : awayIds;
                 for (var i = 0; i < spots.Length; i++)
                 {
+                    var legend = data.roster[lineup[i]];
                     var player = GameObject.CreatePrimitive(PrimitiveType.Capsule);
                     player.name = $"Player_{team.id}_{i}";
                     player.transform.SetParent(root.transform, false);
-                    player.transform.localPosition = spots[i].ToUnity() + Vector3.up * 0.94f;
+                    var height = Mathf.Max(legend.height_m * 0.5f, 0.85f);
+                    player.transform.localPosition = spots[i].ToUnity() + Vector3.up * height;
                     player.transform.localScale = new Vector3(
                         court.player_radius * 2f,
-                        0.94f,
+                        height,
                         court.player_radius * 2f
                     );
-                    Tint(player, color);
+                    Tint(player, FinnballColor.Parse(legend.look.accent));
                 }
+            }
+
+            var plate = LoadPng(arena.plate);
+            if (plate != null)
+            {
+                var wall = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                wall.name = "ArenaPlate";
+                wall.transform.SetParent(root.transform, false);
+                wall.transform.localPosition = new Vector3(0f, 8f, 22f);
+                wall.transform.localRotation = Quaternion.Euler(0f, 180f, 0f);
+                wall.transform.localScale = new Vector3(48f, 22f, 1f);
+                var renderer = wall.GetComponent<Renderer>();
+                if (renderer != null)
+                    renderer.sharedMaterial = new Material(renderer.sharedMaterial) { mainTexture = plate };
             }
 
             if (Camera.main != null)
                 Camera.main.backgroundColor = FinnballColor.Parse(arena.palette.sky);
 
             return root;
+        }
+
+        static Texture2D LoadPng(string relative)
+        {
+            if (string.IsNullOrEmpty(relative))
+                return null;
+            var repo = FinnballManifestLocator.RepoPath();
+            string path = null;
+            if (repo != null)
+            {
+                var root = Directory.GetParent(Path.GetDirectoryName(repo)).FullName;
+                path = Path.Combine(root, "assets", relative);
+            }
+            if (path == null || !File.Exists(path))
+                path = Path.Combine(Application.streamingAssetsPath, relative);
+            if (!File.Exists(path))
+                return null;
+            var tex = new Texture2D(2, 2);
+            return ImageConversion.LoadImage(tex, File.ReadAllBytes(path)) ? tex : null;
         }
 
         static GameObject Box(string name, Vector3 size, Vector3 center, Color color, Transform parent)

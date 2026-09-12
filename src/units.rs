@@ -2614,6 +2614,10 @@ pub fn move_speed(ratings: &Ratings, sprint: bool, stamina: f32) -> f32 {
     speed_from_rating(ratings.speed, sprint && stamina > 0.12) * (0.65 + 0.35 * stamina)
 }
 
+pub fn move_speed_for(id: CharacterId, ratings: &Ratings, sprint: bool, stamina: f32) -> f32 {
+    move_speed(ratings, sprint, stamina) * id.signature().id.speed_mult(sprint)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

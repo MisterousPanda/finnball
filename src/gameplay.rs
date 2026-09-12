@@ -2,13 +2,14 @@ use bevy::prelude::*;
 
 use crate::ball::{spawn_ball, Ball, BallSpin, BallState, BallVel, BucketEvent, Hold};
 use crate::camera::GameCam;
-use crate::roster::Side;
+use crate::roster::{CharacterId, Side};
 use crate::sim::{
     ballistic_velocity, clamp_to_court, classify_shot, contest_with_hands, dribble_cadence,
     flight_time_for_distance, in_paint, intercept_reach, meter_accuracy, release_height,
     release_spin, shot_kind, shot_make_chance, steal_chance, PassKind, ShotType, GRAVITY, HOOP_X,
     PAINT_DEPTH, RIM_HEIGHT, TIPOFF_BALL_AWAY, TIPOFF_BALL_HOME,
 };
+use crate::skills::SkillCtx;
 use crate::states::{AppState, GameMode, MatchConfig, Paused};
 use crate::units::{
     spawn_player, BoxLine, Heat, MoveVel, Player, Pose, PoseClock, Ratings, Stamina,
@@ -459,7 +460,7 @@ fn apply_intents(
             Vec3::new(stick.x, 0.0, stick.y)
         };
         let sprint = intent.sprint && stam.0 > 0.12;
-        let spd = crate::units::move_speed(ratings, sprint, stam.0);
+        let spd = crate::units::move_speed_for(_p.id, ratings, sprint, stam.0);
         if dir.length_squared() > 0.04 {
             let n = dir.normalize();
             vel.0 = n * spd;
@@ -582,9 +583,11 @@ fn pickup_loose_ball(
     if state.hold == Hold::Loose && bvel.0.length() > 9.5 && btf.translation.y > 1.4 {
         return;
     }
-    let passer_side = state
+    let passer = state
         .last_passer
-        .and_then(|p| players.get(p).ok().map(|(_, _, _, pl, _, _)| pl.side));
+        .and_then(|p| players.get(p).ok().map(|(_, _, _, pl, _, _)| (pl.side, pl.id)));
+    let passer_side = passer.map(|x| x.0);
+    let passer_id = passer.map(|x| x.1);
     let mut best: Option<(Entity, f32)> = None;
     for (e, tf, r, p, _, _) in &players {
         if catchable_pass && Some(e) == state.last_passer {
@@ -595,9 +598,12 @@ fn pickup_loose_ball(
         if catchable_pass && passer_side.is_some_and(|s| s != p.side) {
             // Interception: needs a hand on the ball, not just a body in the lane.
             reach *= intercept_reach(r.steal);
+            if let Some(id) = passer_id {
+                reach *= id.signature().id.intercept_resist();
+            }
         }
         if d < reach {
-            let score = r.rebound + (2.0 - d) * 20.0;
+            let score = r.rebound * p.id.signature().id.rebound_mult() + (2.0 - d) * 20.0;
             if best.map(|(_, s)| score > s).unwrap_or(true) {
                 best = Some((e, score));
             }
@@ -705,6 +711,7 @@ fn shoot_and_pass(
         .iter()
         .map(|(e, p, r, t, v, pose, _, _, s, heat)| RosterRow {
             e,
+            id: p.id,
             side: p.side,
             pos: t.translation,
             vel: v.0,
@@ -725,6 +732,7 @@ fn shoot_and_pass(
     };
     let RosterRow {
         e: me_e,
+        id: me_id,
         side: me_side,
         pos: me_pos,
         vel: me_vel,
@@ -873,8 +881,18 @@ fn shoot_and_pass(
                 crate::sim::ShotKind::Three
             );
         let rating = if is_three { three } else { mid };
+        let skill_ctx = SkillCtx {
+            is_three,
+            dist,
+            contest,
+            shot_clock: clock.shot,
+            in_paint: in_the_paint,
+            speed,
+            shot: Some(shot),
+        };
         let chance = (shot_make_chance(rating, dist, contest, meter_err, stam, is_three)
-            * crate::sim::heat_make_mult(streak))
+            * crate::sim::heat_make_mult(streak)
+            * me_id.signature().id.make_mult(skill_ctx))
         .min(0.96);
         let mut target = hoop;
         if rng.f32() > chance {
@@ -934,6 +952,7 @@ fn shoot_and_pass(
 #[derive(Clone, Copy)]
 struct RosterRow {
     e: Entity,
+    id: CharacterId,
     side: Side,
     pos: Vec3,
     vel: Vec3,
@@ -966,7 +985,12 @@ fn nearest_contest(roster: &[RosterRow], me: Entity, side: Side, pos: Vec3) -> f
     roster
         .iter()
         .filter(|r| r.e != me && r.side != side)
-        .map(|r| contest_with_hands(r.pos.distance(pos), r.block, r.hands_up))
+        .map(|r| {
+            let hoop_x = if side == Side::Home { HOOP_X } else { -HOOP_X };
+            let paint = in_paint(pos.x, pos.z, hoop_x);
+            contest_with_hands(r.pos.distance(pos), r.block, r.hands_up)
+                * r.id.signature().id.contest_mult(paint)
+        })
         .fold(0.0, f32::max)
 }
 
@@ -1021,13 +1045,13 @@ fn steal_attempts(
         let mut vic_data = None;
         for (e, p, r, t, _, _, _) in &players {
             if e == thief {
-                thief_data = Some((p.side, t.translation, r.steal));
+                thief_data = Some((p.side, p.id, t.translation, r.steal));
             }
             if e == holder {
                 vic_data = Some((p.side, t.translation, r.handle));
             }
         }
-        let Some((thief_side, tp, steal)) = thief_data else {
+        let Some((thief_side, thief_id, tp, steal)) = thief_data else {
             continue;
         };
         let Some((vic_side, vp, handle)) = vic_data else {
@@ -1038,7 +1062,7 @@ fn steal_attempts(
         }
         let human_thief = control.entity == Some(thief);
         let d = tp.distance(vp);
-        if rng.f32() < steal_chance(steal, handle, d) {
+        if rng.f32() < steal_chance(steal, handle, d) * thief_id.signature().id.steal_mult() {
             state.holder = Some(thief);
             state.last_touch = Some(thief);
             steals.write(StealEvent {

@@ -29,7 +29,8 @@ use crate::gameplay::{
     AiRequests, GameRng, GameplaySet, LastPass, LiveControl, MatchClock, PlayerIntent,
     ShotMeter, Ticker,
 };
-use crate::roster::Side;
+use crate::roster::{CharacterId, Side};
+use crate::skills::SkillCtx;
 use crate::sim::{
     ballistic_velocity, clamp_to_court, classify_shot, contest_factor, contest_with_hands,
     flight_time_for_distance, heat_make_mult, in_paint, release_height, release_spin, shot_ev,
@@ -478,6 +479,7 @@ fn sign_or(v: f32, fallback: f32) -> f32 {
 #[derive(Clone, Copy)]
 struct Snap {
     e: Entity,
+    id: CharacterId,
     side: Side,
     slot: u8,
     pos: Vec3,
@@ -507,7 +509,12 @@ fn contest_on(snaps: &[Snap], me: Entity, side: Side, pos: Vec3) -> f32 {
     snaps
         .iter()
         .filter(|s| s.e != me && s.side != side)
-        .map(|s| contest_with_hands(s.pos.distance(pos), s.r.block, s.hands_up))
+        .map(|s| {
+            let hoop_x = crate::sim::offensive_hoop_x(side == Side::Home);
+            let paint = in_paint(pos.x, pos.z, hoop_x);
+            contest_with_hands(s.pos.distance(pos), s.r.block, s.hands_up)
+                * s.id.signature().id.contest_mult(paint)
+        })
         .fold(0.0, f32::max)
 }
 
@@ -535,6 +542,7 @@ fn shot_value(
     streak: u8,
     prof: &AiProfile,
     hands_matter: bool,
+    shot_clock: f32,
 ) -> (f32, f32, bool) {
     let hoop_x = attack_hoop_x(shooter.side);
     let dist = (shooter.pos.x - hoop_x).hypot(shooter.pos.z);
@@ -555,10 +563,20 @@ fn shot_value(
             .map(|s| contest_factor(s.pos.distance(shooter.pos), s.r.block))
             .fold(0.0, f32::max)
     };
+    let skill_ctx = SkillCtx {
+        is_three,
+        dist,
+        contest,
+        shot_clock,
+        in_paint: in_paint(shooter.pos.x, shooter.pos.z, hoop_x),
+        speed: shooter.vel.length(),
+        shot: None,
+    };
     let chance = (shot_make_chance(rating, dist, contest, prof.meter_err, stam, is_three)
         * heat_make_mult(streak)
-        * prof.skill)
-        .min(0.94);
+        * prof.skill
+        * shooter.id.signature().id.make_mult(skill_ctx))
+    .min(0.94);
     (shot_ev(chance, is_three), chance, is_three)
 }
 
@@ -626,6 +644,7 @@ fn ai_move(
         .iter()
         .map(|(e, p, r, t, v, pose, _, _, brain)| Snap {
             e,
+            id: p.id,
             side: p.side,
             slot: p.slot,
             pos: t.translation,
@@ -791,7 +810,9 @@ fn ai_move(
         let sprint = (mv.sprint || dist > 6.0) && stam.0 > 0.12;
         if dist > 0.3 {
             let n = to.normalize();
-            let spd = crate::units::move_speed(ratings, sprint, stam.0) * prof.speed * mv.ease;
+            let spd = crate::units::move_speed_for(p.id, ratings, sprint, stam.0)
+                * prof.speed
+                * mv.ease;
             // Ease into short hops so spots are held without jitter.
             let spd = spd.min(dist / dt * 0.5 + 0.5);
             vel.0 = n * spd;
@@ -1366,6 +1387,7 @@ fn ai_decisions(
         .iter()
         .map(|(e, p, r, t, v, pose, _, _, brain, _, _)| Snap {
             e,
+            id: p.id,
             side: p.side,
             slot: p.slot,
             pos: t.translation,
@@ -1395,7 +1417,8 @@ fn ai_decisions(
     let hoop_g = Vec3::new(hoop_x, 0.0, 0.0);
     let dist = flat_dist(me.pos, hoop_g);
     let paint = in_paint(me.pos.x, me.pos.z, hoop_x);
-    let (shot_ev_now, shot_chance, is_three) = shot_value(&snaps, &me, stam, streak, &prof, true);
+    let (shot_ev_now, shot_chance, is_three) =
+        shot_value(&snaps, &me, stam, streak, &prof, true, clock.shot);
 
     // Release a wound-up jumper; the contest *now* decides the roll.
     if brain.plan == Plan::Shoot {
@@ -1461,7 +1484,7 @@ fn ai_decisions(
         ) {
             continue;
         }
-        let (ev, _, _) = shot_value(&snaps, mate, 0.9, 0, &prof, false);
+        let (ev, _, _) = shot_value(&snaps, mate, 0.9, 0, &prof, false, clock.shot);
         let open = nearest_opp_dist(&snaps, me.side, mate.pos);
         let risk = lane_risk(&snaps, me.side, me.pos, mate.pos, 1.1);
         let cutting = flat_dist(mate.pos, hoop_g) < 3.5

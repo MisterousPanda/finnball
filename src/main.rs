@@ -15,6 +15,7 @@ mod input;
 mod interop;
 mod quality;
 mod roster;
+mod skills;
 mod sim;
 mod states;
 mod theme;

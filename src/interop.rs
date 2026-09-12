@@ -146,6 +146,14 @@ fn character(j: &mut Json, id: CharacterId) {
     j.key("accent").string(&hex_srgb(p.accent));
     j.key("eye").string(&hex_srgb(p.eye));
     j.end_object();
+    let skill = id.signature();
+    j.key("skill");
+    j.begin_object();
+    j.key("id").string(skill.id.slug());
+    j.key("name").string(skill.name);
+    j.key("hook").string(skill.hook);
+    j.end_object();
+    j.key("portrait").string(&format!("portraits/{}.png", id.slug()));
     j.key("kit");
     j.begin_object();
     j.key("arm_sleeve").string(kit.arm_sleeve.slug());
@@ -171,6 +179,7 @@ fn arena(j: &mut Json, id: ArenaId) {
     j.key("bounce").num(t.bounce);
     j.key("hangtime").num(t.hangtime);
     j.key("env_pano").optional_string(t.env_pano);
+    j.key("plate").string(&format!("env/plates/{}.png", id.slug()));
     j.key("palette");
     j.begin_object();
     j.key("floor_a").string(&hex_srgb(t.floor_a));
@@ -428,6 +437,8 @@ mod tests {
         assert!(json.contains("\"kaito_flash\""));
         assert!(json.contains("\"neo_tokyo\""));
         assert!(json.contains("KAITO FLASH"));
+        assert!(json.contains("BLINK DRIVE"));
+        assert!(json.contains("logo_gravity"));
         assert!(json.contains("NEO-TOKYO DOME"));
         assert_eq!(json.matches("\"id\": \"kaito_flash\"").count(), 1);
         assert_eq!(CharacterId::ALL.len(), 10);

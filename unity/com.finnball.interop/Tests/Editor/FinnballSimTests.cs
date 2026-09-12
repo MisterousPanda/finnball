@@ -147,6 +147,15 @@ namespace Finnball.Tests
             Assert.AreEqual(ThreeRadius, data.court.three_radius, 1e-5f);
             Assert.AreEqual(10, data.roster.Length);
             Assert.AreEqual(5, data.arenas.Length);
+            Assert.AreEqual("blink_drive", data.roster[0].skill.id);
+            Assert.AreEqual("LOGO GRAVITY", data.roster[1].skill.name);
+            Assert.AreEqual(1.22f, FinnballSkills.MakeMult(FinnballSkills.LogoGravity, new SkillCtx
+            {
+                isThree = true,
+                dist = 11f,
+            }));
+            Assert.AreEqual(1.35f, FinnballSkills.ContestMult(FinnballSkills.LockedGate, true));
+            Assert.AreEqual(1.28f, FinnballSkills.StealMult(FinnballSkills.NeverThere));
             for (var i = 0; i < 3; i++)
             {
                 Assert.AreEqual(TipoffHome[i], data.spawns.home[i].ToUnity());
